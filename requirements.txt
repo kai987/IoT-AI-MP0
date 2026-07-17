@@ -1,0 +1,8 @@
+opencv-contrib-python==4.13.0.92
+mediapipe==0.10.35
+pygame==2.6.1
+numpy>=1.24
+Pillow>=10.0
+matplotlib>=3.7
+jupyter>=1.0
+ipywidgets>=8.0

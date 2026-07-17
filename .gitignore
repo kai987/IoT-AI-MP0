@@ -1,0 +1,24 @@
+# 報告書（提出用文書はGit管理しない）
+/報告書/
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Python caches and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter temporary files
+.ipynb_checkpoints/
+
+# macOS metadata
+.DS_Store
+
+# Runtime-generated game and camera output
+/emotion_runner/data/high_score.json
+/MP-0_M25W0243_emotion_result.jpg
