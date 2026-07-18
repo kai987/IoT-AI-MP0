@@ -454,40 +454,51 @@ class EmotionRunnerGame:
         )
         pygame.draw.rect(panel, (*settings.PANEL, 225), panel.get_rect(), border_radius=18)
         self.screen.blit(panel, (hud_x, hud_y))
+        # 左・中央・右の各内容ブロックをHUD内で垂直中央に揃える。 / 将左、中、右三个内容区在HUD内垂直居中。
         self._text(
             f"スコア  {int(self.score):06d}",
             self.font_medium,
             settings.WHITE,
-            (hud_x + 22, hud_y + 14),
+            (hud_x + 22, hud_y + 22),
         )
         self._text(
             f"ハイスコア  {self.high_score:06d}",
             self.font_small,
             settings.MUTED,
-            (hud_x + 24, hud_y + 58),
+            (hud_x + 24, hud_y + 62),
         )
         self._text(
             f"コンボ  x{self.combo}",
             self.font_body,
             settings.YELLOW,
-            (hud_x + 294, hud_y + 21),
+            (hud_x + 294, hud_y + 23),
         )
         self._text(
             f"スピード  {self.current_speed / 100:.1f}",
             self.font_body,
             settings.CYAN,
-            (hud_x + 294, hud_y + 56),
+            (hud_x + 294, hud_y + 55),
+        )
+        self._text(
+            f"プレイ時間 {self._format_elapsed_time(self.elapsed)}",
+            self.font_small,
+            settings.MUTED,
+            (
+                hud_x + settings.HUD_TIME_CENTER_X_OFFSET,
+                hud_y + settings.HUD_TIME_CENTER_Y_OFFSET,
+            ),
+            center=True,
         )
 
         for index in range(settings.INITIAL_LIVES):
             color = settings.RED if index < self.player.lives else settings.PANEL_LIGHT
-            self._draw_heart((hud_x + 512 + index * 34, hud_y + 47), color)
+            self._draw_heart((hud_x + 512 + index * 34, hud_y + 49), color)
         if self.state == GameState.PLAYING:
             self._text(
                 "P 一時停止  M ミュート",
                 self.font_small,
                 settings.MUTED,
-                (hud_x + 482, hud_y + 74),
+                (hud_x + 482, hud_y + 68),
             )
 
     def _draw_camera_panel(self) -> None:
@@ -596,7 +607,12 @@ class EmotionRunnerGame:
                 border_radius=12,
             )
             self._text(key, self.font_small, color, (x + 13, y + 15))
-            self._text(label, self.font_body, settings.WHITE, (x + 77, y + 8))
+            text_x_offset = (
+                settings.SKILL_CARD_SPACE_TEXT_X_OFFSET
+                if action == GameAction.JUMP
+                else settings.SKILL_CARD_SHORT_KEY_TEXT_X_OFFSET
+            )
+            self._text(label, self.font_body, settings.WHITE, (x + text_x_offset, y + 8))
             if is_active:
                 subtext = f"{emotion}・実行中"
                 subcolor = settings.GREEN
@@ -606,7 +622,7 @@ class EmotionRunnerGame:
             else:
                 subtext = emotion
                 subcolor = settings.MUTED
-            self._text(subtext, self.font_small, subcolor, (x + 77, y + 38))
+            self._text(subtext, self.font_small, subcolor, (x + text_x_offset, y + 38))
 
             remaining = self.controller.cooldown_remaining(action, now)
             if remaining > 0.0 and not is_active and not is_pending:
@@ -845,6 +861,14 @@ class EmotionRunnerGame:
         while shortened and font.size(shortened + "…")[0] > max_width:
             shortened = shortened[:-1]
         return shortened + "…"
+
+    @staticmethod
+    def _format_elapsed_time(seconds: float) -> str:
+        rounded_seconds = round(max(0.0, seconds), 2)
+        if rounded_seconds < 60.0:
+            return f"{rounded_seconds:05.2f}秒"
+        minutes, remaining_seconds = divmod(int(rounded_seconds), 60)
+        return f"{minutes}分{remaining_seconds:02d}秒"
 
     @staticmethod
     def _load_font(size: int) -> pygame.font.Font:

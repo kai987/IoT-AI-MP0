@@ -26,6 +26,8 @@ HUD_X = 24  # HUD左端のX座標 / HUD左边X坐标
 HUD_Y = 20  # HUD上端のY座標 / HUD顶部Y坐标
 HUD_WIDTH = 700  # HUDの幅 / HUD宽度
 HUD_HEIGHT = 102  # HUDの高さ / HUD高度
+HUD_TIME_CENTER_X_OFFSET = 580  # HUD左端からプレイ時間表示中心までのX距離 / 从HUD左边到游戏时长文字中心的X距离
+HUD_TIME_CENTER_Y_OFFSET = 25  # HUD上端からプレイ時間表示中心までのY距離 / 从HUD顶部到游戏时长文字中心的Y距离
 
 ACTION_TIP_CENTER_X = WINDOW_WIDTH // 2  # 動作ヒント中心のX座標 / 动作提示框中心X坐标
 ACTION_TIP_CENTER_Y = 170  # HUDを避けた動作ヒント中心のY座標 / 已避开HUD的动作提示框中心Y坐标
@@ -34,6 +36,10 @@ ACTION_TIP_HEIGHT = 54  # 動作ヒントの高さ / 动作提示框高度
 ACTION_TIP_DURATION = 0.9  # 通常の動作ヒント表示時間（秒） / 普通动作提示显示时间（秒）
 ACTION_TIP_START_DURATION = 0.8  # ゲーム開始ヒント表示時間（秒） / 游戏开始提示显示时间（秒）
 ACTION_TIP_BACKGROUND_ALPHA = 210  # ヒント背景の不透明度（0～255） / 提示框背景不透明度（0～255）
+
+# 下部スキルカード内の動作名・表情名のXオフセット / 底部技能卡内动作名、表情名的X偏移
+SKILL_CARD_SPACE_TEXT_X_OFFSET = 77  # SPACEカードは長いキー表示を避ける / SPACE卡避开较长的按键文字
+SKILL_CARD_SHORT_KEY_TEXT_X_OFFSET = 47  # S・A・Dカードの右側文字を左へ寄せる / 将S、A、D卡右侧文字向左移动
 
 
 # ---------------------------------------------------------------------------
@@ -75,14 +81,14 @@ FACE_ACTION_LOSS_GRACE = 0.45  # 短い「判定不能」中に現在の表情�
 # 表情分類とMediaPipe顔特徴のしきい値 / 表情分类与MediaPipe面部特征阈值
 # しきい値を下げると発動しやすくなりますが、誤発動も増えます。 / 降低阈值会更容易触发，但也会增加误触发。
 # ---------------------------------------------------------------------------
-ACTION_CONFIDENCE_THRESHOLD = 0.45  # 表情動作を受理する最低分類確信度 / 接受表情动作的最低分类置信度
+ACTION_CONFIDENCE_THRESHOLD = 0.40  # 表情動作を受理する最低分類確信度 / 接受表情动作的最低分类置信度
 STRONG_CLASSIFIER_CONFIDENCE = 0.70  # 補助特徴の条件を省略できる強い確信度 / 可跳过辅助特征门槛的强置信度
-SURPRISE_MOUTH_RATIO_THRESHOLD = 0.12  # 驚き：最低開口比率 / 驚き：最低张嘴比例
-SURPRISE_JAW_OPEN_THRESHOLD = 0.18  # 驚き：最低下顎開口値 / 驚き：最低下颌张开值
-SURPRISE_EYE_WIDE_THRESHOLD = 0.18  # 驚き：最低開眼値 / 驚き：最低睁眼值
-SURPRISE_BROW_RAISE_THRESHOLD = 0.20  # 驚き：最低眉上げ値 / 驚き：最低抬眉值
-HAPPINESS_SMILE_THRESHOLD = 0.18  # 喜び：最低笑顔値 / 喜び：最低微笑值
-ANGER_BROW_FURROW_THRESHOLD = 0.15  # 怒り：最低眉寄せ値 / 怒り：最低皱眉值
+SURPRISE_MOUTH_RATIO_THRESHOLD = 0.8  # 驚き：最低開口比率 / 驚き：最低张嘴比例
+SURPRISE_JAW_OPEN_THRESHOLD = 0.12  # 驚き：最低下顎開口値 / 驚き：最低下颌张开值
+SURPRISE_EYE_WIDE_THRESHOLD = 0.12  # 驚き：最低開眼値 / 驚き：最低睁眼值
+SURPRISE_BROW_RAISE_THRESHOLD = 0.10  # 驚き：最低眉上げ値 / 驚き：最低抬眉值
+HAPPINESS_SMILE_THRESHOLD = 0.12  # 喜び：最低笑顔値 / 喜び：最低微笑值
+ANGER_BROW_FURROW_THRESHOLD = 0.75  # 怒り：最低眉寄せ値 / 怒り：最低皱眉值
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +96,7 @@ ANGER_BROW_FURROW_THRESHOLD = 0.15  # 怒り：最低眉寄せ値 / 怒り：最
 # CAMERA_INDEX=None でデバイス名からMacBook内蔵カメラを自動選択。0や1にも固定できます。 / CAMERA_INDEX=None 时按设备名称自动选择MacBook内置摄像头；也可改为0、1等。
 # コマンドラインの --camera でこのデフォルト値を一時的に上書きできます。 / 命令行的 --camera 参数仍可临时覆盖这里的默认值。
 # ---------------------------------------------------------------------------
-CAMERA_INDEX: int | None = None  # デフォルトのカメラindex / 默认摄像头index
+CAMERA_INDEX: int | None = 1  # デフォルトのカメラindex / 默认摄像头index
 CAMERA_PREVIEW_WIDTH = 320  # カメラプレビューの幅 / 摄像头预览宽度
 CAMERA_PREVIEW_HEIGHT = 180  # カメラプレビューの高さ / 摄像头预览高度
 CAMERA_PANEL_X = WINDOW_WIDTH - CAMERA_PREVIEW_WIDTH - 28  # プレビュー左端のX座標 / 预览左边X坐标

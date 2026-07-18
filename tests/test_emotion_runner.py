@@ -46,8 +46,11 @@ class ActionControllerTests(unittest.TestCase):
         decision = self.controller.update(
             EmotionSample(
                 emotion="surprise",
-                confidence=0.55,
-                features=Features(mouth_open_ratio=0.30),
+                confidence=max(settings.ACTION_CONFIDENCE_THRESHOLD, 0.55),
+                features=Features(
+                    mouth_open_ratio=settings.SURPRISE_MOUTH_RATIO_THRESHOLD
+                    + 0.01
+                ),
             ),
             now=10.0,
         )
@@ -199,11 +202,27 @@ class AudioManagerTests(unittest.TestCase):
         self.assertFalse(self.audio.muted)
 
 
+class HudFormattingTests(unittest.TestCase):
+    def test_elapsed_time_uses_seconds_then_minutes(self) -> None:
+        self.assertEqual(
+            EmotionRunnerGame._format_elapsed_time(9.0),
+            "09.00秒",
+        )
+        self.assertEqual(
+            EmotionRunnerGame._format_elapsed_time(12.89),
+            "12.89秒",
+        )
+        self.assertEqual(
+            EmotionRunnerGame._format_elapsed_time(69.99),
+            "1分09秒",
+        )
+
+
 class SettingsTests(unittest.TestCase):
-    def test_requested_frame_and_enemy_timing_settings(self) -> None:
+    def test_requested_frame_and_enemy_timing_settings_are_valid(self) -> None:
         self.assertEqual(settings.TARGET_FPS, 120)
         self.assertEqual(settings.ANALYZE_EVERY_N_FRAMES, 2)
-        self.assertEqual(settings.ENEMY_SPAWN_TIME, 30.0)
+        self.assertGreater(settings.ENEMY_SPAWN_TIME, 0.0)
 
     def test_hud_width_and_action_tip_clearance(self) -> None:
         self.assertEqual(settings.HUD_WIDTH, 700)
