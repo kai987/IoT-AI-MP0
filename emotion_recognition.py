@@ -10,6 +10,7 @@ EfficientNet-B0 8クラス ONNX モデルを使用する。検出した5点の
 from __future__ import annotations
 
 import argparse
+import logging
 import math
 import os
 import re
@@ -26,7 +27,17 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from emotion_runner.settings import ANALYZE_EVERY_N_FRAMES
+from emotion_runner import settings
+from emotion_runner.app_paths import (
+    is_frozen,
+    model_path,
+    resource_root,
+    screenshot_dir,
+)
+from emotion_runner.mediapipe_runtime import load_mediapipe_runtime
+
+ANALYZE_EVERY_N_FRAMES = settings.ANALYZE_EVERY_N_FRAMES
+LOGGER = logging.getLogger("emotion_runner.camera")
 
 os.environ.setdefault("GLOG_minloglevel", "2")
 os.environ.setdefault("ABSL_MIN_LOG_LEVEL", "2")
@@ -39,17 +50,17 @@ with warnings.catch_warnings():
         category=FutureWarning,
     )
     try:
-        import mediapipe as mp
+        MEDIAPIPE = load_mediapipe_runtime(lightweight=is_frozen())
     except ImportError:
-        mp = None
+        MEDIAPIPE = None
 
 STUDENT_ID = "M25W0243"
-PROJECT_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = resource_root()
 MODELS_DIR = PROJECT_DIR / "models"
 
-FACE_MODEL_PATH = MODELS_DIR / "face_detection_yunet_2023mar.onnx"
-EMOTION_MODEL_PATH = MODELS_DIR / "enet_b0_8_best_vgaf.onnx"
-FACE_LANDMARKER_MODEL_PATH = MODELS_DIR / "face_landmarker.task"
+FACE_MODEL_PATH = model_path("face_detection_yunet_2023mar.onnx")
+EMOTION_MODEL_PATH = model_path("enet_b0_8_best_vgaf.onnx")
+FACE_LANDMARKER_MODEL_PATH = model_path("face_landmarker.task")
 
 FACE_CONFIDENCE_THRESHOLD = 0.85
 FACE_NMS_THRESHOLD = 0.30
@@ -94,7 +105,7 @@ LEFT_MOUTH_CORNER_INDEX = 61
 RIGHT_MOUTH_CORNER_INDEX = 291
 
 WINDOW_NAME = f"{STUDENT_ID} - Real-time Multi-face Emotion Recognition"
-DEFAULT_SCREENSHOT_PATH = PROJECT_DIR / f"MP-0_{STUDENT_ID}_emotion_result.jpg"
+DEFAULT_SCREENSHOT_PATH = screenshot_dir() / f"MP-0_{STUDENT_ID}_emotion_result.jpg"
 CAMERA_FRAME_WIDTH = 1920
 CAMERA_FRAME_HEIGHT = 1080
 NOTEBOOK_PREVIEW_WIDTH = 1920
@@ -358,24 +369,24 @@ def load_emotion_network():
 def load_face_landmarker():
     """MediaPipeの478点Face Landmarkerと52種のblendshapeを読み込む。"""
 
-    if mp is None:
+    if MEDIAPIPE is None:
         raise RuntimeError(
             "MediaPipeがインストールされていません。"
             "python3 -m pip install -r requirements.txt を実行してください。"
         )
 
-    options = mp.tasks.vision.FaceLandmarkerOptions(
-        base_options=mp.tasks.BaseOptions(
+    options = MEDIAPIPE.FaceLandmarkerOptions(
+        base_options=MEDIAPIPE.BaseOptions(
             model_asset_path=str(FACE_LANDMARKER_MODEL_PATH),
         ),
-        running_mode=mp.tasks.vision.RunningMode.IMAGE,
+        running_mode=MEDIAPIPE.RunningMode.IMAGE,
         num_faces=1,
         min_face_detection_confidence=0.5,
         min_face_presence_confidence=0.5,
         min_tracking_confidence=0.5,
         output_face_blendshapes=True,
     )
-    return mp.tasks.vision.FaceLandmarker.create_from_options(options)
+    return MEDIAPIPE.FaceLandmarker.create_from_options(options)
 
 
 def load_japanese_font(size: int = 28):
@@ -460,14 +471,14 @@ def extract_facial_action_features(
 ) -> FacialActionFeatures | None:
     """位置合わせ済み顔から口・眉・目の特徴量を返す。"""
 
-    if mp is None:
+    if MEDIAPIPE is None:
         return None
     if face_bgr.ndim != 3 or face_bgr.shape[2] != 3 or face_bgr.size == 0:
         raise ValueError("Face LandmarkerにはBGRの3チャンネル画像が必要です。")
 
     face_rgb = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2RGB)
-    media_image = mp.Image(
-        image_format=mp.ImageFormat.SRGB,
+    media_image = MEDIAPIPE.Image(
+        image_format=MEDIAPIPE.ImageFormat.SRGB,
         data=np.ascontiguousarray(face_rgb),
     )
     result = face_landmarker.detect(media_image)
@@ -1108,11 +1119,31 @@ class EmotionRecognitionApp:
         return cv2.cvtColor(np.asarray(pil_image), cv2.COLOR_RGB2BGR)
 
 
+FFMPEG_FALLBACK_PATHS = (
+    Path("/opt/homebrew/bin/ffmpeg"),
+    Path("/usr/local/bin/ffmpeg"),
+)
+CAMERA_PROBE_INDICES = tuple(range(6))
+
+
+def find_ffmpeg_executable() -> str | None:
+    """Find FFmpeg even when Finder starts the app with a minimal PATH."""
+
+    path_from_environment = shutil.which("ffmpeg")
+    if path_from_environment:
+        return path_from_environment
+    for candidate in FFMPEG_FALLBACK_PATHS:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
+
+
 def list_avfoundation_video_devices() -> list[tuple[int, str]]:
     """FFmpegからAVFoundationのカメラindexとデバイス名を取得する。"""
 
-    ffmpeg_path = shutil.which("ffmpeg")
+    ffmpeg_path = find_ffmpeg_executable()
     if ffmpeg_path is None:
+        LOGGER.info("FFmpeg is unavailable; camera-name lookup will be skipped")
         return []
 
     try:
@@ -1173,49 +1204,149 @@ def find_macbook_camera(
     return None
 
 
+def camera_candidate_indices(
+    preferred_index: int | None,
+    devices: list[tuple[int, str]],
+) -> list[int]:
+    """Build a stable explicit/configured/named/probed camera order."""
+
+    candidates: list[int] = []
+
+    def add(index: int | None) -> None:
+        if index is not None and index >= 0 and index not in candidates:
+            candidates.append(index)
+
+    # A CLI/function argument outranks the configured default.
+    add(preferred_index)
+    add(settings.CAMERA_INDEX)
+
+    selected_device = find_macbook_camera(devices)
+    if selected_device is not None:
+        add(selected_device[0])
+
+    for camera_index in CAMERA_PROBE_INDICES:
+        add(camera_index)
+    return candidates
+
+
+def _open_camera_index(camera_index: int) -> cv2.VideoCapture | None:
+    """Open one AVFoundation index and require at least one valid frame."""
+
+    try:
+        capture = cv2.VideoCapture(camera_index, cv2.CAP_AVFOUNDATION)
+    except Exception:
+        LOGGER.warning("Camera construction failed for index=%s", camera_index, exc_info=True)
+        return None
+    valid = False
+    try:
+        if not capture.isOpened():
+            return None
+        for _attempt in range(3):
+            ok, frame = capture.read()
+            if ok and frame is not None and getattr(frame, "size", 0) > 0:
+                valid = True
+                return capture
+        return None
+    except Exception:
+        LOGGER.warning("Camera probe failed for index=%s", camera_index, exc_info=True)
+        return None
+    finally:
+        if not valid:
+            try:
+                capture.release()
+            except Exception:
+                LOGGER.warning(
+                    "Camera release failed for index=%s",
+                    camera_index,
+                    exc_info=True,
+                )
+
+
+def camera_permission_hint() -> str:
+    if is_frozen():
+        return (
+            "macOSの「システム設定 > プライバシーとセキュリティ > "
+            "カメラ」でEmotion Runnerを許可してください。"
+        )
+    return (
+        "macOSの「システム設定 > プライバシーとセキュリティ > "
+        "カメラ」でTerminalまたはVisual Studio Codeを許可し、"
+        "使用中のアプリを再起動してください。"
+    )
+
+
 def open_camera(preferred_index: int | None) -> tuple[cv2.VideoCapture, int]:
-    """指定index、または名前で検出したMacBook内蔵カメラを開く。"""
+    """Open the first working camera using explicit-to-probe priority."""
+
+    initial_candidates: list[int] = []
+    for candidate in (preferred_index, settings.CAMERA_INDEX):
+        if candidate is not None and candidate >= 0 and candidate not in initial_candidates:
+            initial_candidates.append(candidate)
+
+    attempted: list[int] = []
+    LOGGER.info(
+        "Camera selection started (preferred=%s, configured=%s)",
+        preferred_index,
+        settings.CAMERA_INDEX,
+    )
+
+    # Explicit and configured indices do not depend on FFmpeg being installed.
+    for camera_index in initial_candidates:
+        attempted.append(camera_index)
+        LOGGER.info(
+            "Trying explicit/configured camera index=%s",
+            camera_index,
+        )
+        capture = _open_camera_index(camera_index)
+        if capture is None:
+            continue
+        device_name = f"index {camera_index}"
+        message = f"カメラを選択しました: index={camera_index}, name={device_name}"
+        print(message)
+        LOGGER.info(message)
+        return capture, camera_index
 
     devices = list_avfoundation_video_devices()
-    if preferred_index is None:
-        selected_device = find_macbook_camera(devices)
-        if selected_device is None:
-            device_text = (
-                ", ".join(f"{index}: {name}" for index, name in devices)
-                or "取得できませんでした"
-            )
-            raise RuntimeError(
-                "MacBook内蔵カメラを名前で検出できません。"
-                f" AVFoundationデバイス: {device_text}"
-            )
-        camera_index, device_name = selected_device
-        print(
-            f"MacBook内蔵カメラを選択しました: "
-            f"index={camera_index}, name={device_name}"
+    device_names = dict(devices)
+    candidates = camera_candidate_indices(preferred_index, devices)
+    for camera_index in candidates:
+        if camera_index in attempted:
+            continue
+        attempted.append(camera_index)
+        LOGGER.info(
+            "Trying camera index=%s name=%s",
+            camera_index,
+            device_names.get(camera_index, "unknown"),
         )
-    else:
-        camera_index = preferred_index
-        device_name = next(
-            (name for index, name in devices if index == camera_index),
-            f"index {camera_index}",
-        )
-
-    capture = cv2.VideoCapture(camera_index, cv2.CAP_AVFOUNDATION)
-    if capture.isOpened():
+        capture = _open_camera_index(camera_index)
+        if capture is None:
+            continue
+        device_name = device_names.get(camera_index, f"index {camera_index}")
+        message = f"カメラを選択しました: index={camera_index}, name={device_name}"
+        print(message)
+        LOGGER.info(message)
         return capture, camera_index
-    capture.release()
 
     device_text = (
         ", ".join(f"{index}: {name}" for index, name in devices)
         or "取得できませんでした"
     )
-    raise RuntimeError(
-        f"カメラを開けませんでした: index={camera_index}, "
-        f"name={device_name}。AVFoundationデバイス: {device_text}。"
-        "macOSの「システム設定 > プライバシーとセキュリティ > "
-        "カメラ」でVisual Studio Codeを許可し、VS Codeを完全に終了して"
-        "開き直してください。iPhoneに切り替える回避は行いません。"
+    error_message = (
+        "利用可能なカメラを開いて有効な映像を取得できませんでした。"
+        f" 試行index={attempted}。AVFoundationデバイス: {device_text}。"
+        f"{camera_permission_hint()} キーボード操作は引き続き使用できます。"
     )
+    LOGGER.error(error_message)
+    raise RuntimeError(error_message)
+
+
+def save_result_image(path: Path, image: np.ndarray) -> None:
+    """Write an image to a writable directory and detect encoder failures."""
+
+    destination = Path(path).expanduser()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if not cv2.imwrite(str(destination), image):
+        raise OSError(f"画像を保存できませんでした: {destination}")
 
 
 def run_camera(
@@ -1226,7 +1357,7 @@ def run_camera(
 
     app = EmotionRecognitionApp()
     try:
-        capture, active_camera_index = open_camera(1)
+        capture, active_camera_index = open_camera(camera_index)
     except Exception:
         app.close()
         raise
@@ -1239,8 +1370,18 @@ def run_camera(
         cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
         cv2.setMouseCallback(WINDOW_NAME, window_control.handle_mouse)
     except Exception:
-        capture.release()
-        close_opencv_windows()
+        try:
+            capture.release()
+        except Exception:
+            LOGGER.exception("Camera release failed after window setup error")
+        try:
+            close_opencv_windows()
+        except Exception:
+            LOGGER.exception("OpenCV window cleanup failed")
+        try:
+            app.close()
+        except Exception:
+            LOGGER.exception("Model cleanup failed after window setup error")
         raise
 
     print(
@@ -1286,8 +1427,12 @@ def run_camera(
             raw_key = cv2.waitKeyEx(15)
             key = raw_key & 0xFF if raw_key >= 0 else -1
             if key == ord("s"):
-                cv2.imwrite(str(screenshot_path), result)
-                print(f"スナップショットを保存しました: {screenshot_path}")
+                try:
+                    save_result_image(screenshot_path, result)
+                    print(f"スナップショットを保存しました: {screenshot_path}")
+                except OSError as error:
+                    LOGGER.exception("Screenshot save failed")
+                    print(error)
             elif camera_exit_requested(key, window_control):
                 print("リアルタイム表情認識を終了します。")
                 break
@@ -1411,8 +1556,12 @@ def run_camera_in_notebook(
                 result = app.process_frame(frame, frame_number, smoothed_fps)
                 if session.save_event.is_set():
                     session.save_event.clear()
-                    cv2.imwrite(str(screenshot_path), result)
-                    status.value = f"<b>保存しました:</b> {screenshot_path.name}"
+                    try:
+                        save_result_image(screenshot_path, result)
+                        status.value = f"<b>保存しました:</b> {screenshot_path.name}"
+                    except OSError as error:
+                        LOGGER.exception("Notebook screenshot save failed")
+                        status.value = f"<b>保存エラー:</b> {error}"
 
                 if current_time >= next_preview_time:
                     preview_frame = result
@@ -1473,7 +1622,7 @@ def process_still_image(
             result = app.process_frame(image, frame_number=frame_number)
     finally:
         app.close()
-    cv2.imwrite(str(output_path), result)
+    save_result_image(output_path, result)
     print(f"認識結果を保存しました: {output_path}")
 
 
@@ -1503,7 +1652,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     if args.image is not None:
-        output_path = args.output or PROJECT_DIR / f"MP-0_{STUDENT_ID}_image_result.jpg"
+        output_path = args.output or screenshot_dir() / f"MP-0_{STUDENT_ID}_image_result.jpg"
         process_still_image(args.image, output_path)
     else:
         run_camera(camera_index=args.camera)

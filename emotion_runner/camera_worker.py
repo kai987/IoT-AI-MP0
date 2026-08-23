@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import logging
 import multiprocessing as mp
 import queue
 import time
@@ -10,6 +11,13 @@ import time
 import numpy as np
 
 from . import settings
+
+
+CAMERA_READ_RETRY_ATTEMPTS = 12
+CAMERA_READ_RETRY_DELAY = 0.05
+CAMERA_RECONNECT_ATTEMPTS = 3
+CAMERA_RECONNECT_DELAY = 0.40
+CAMERA_HEARTBEAT_INTERVAL = 5.0
 
 
 @dataclass(frozen=True)
@@ -63,6 +71,57 @@ def _queue_latest(
         pass
 
 
+def _read_frame_with_retries(
+    capture,
+    stop_event,
+    attempts: int = CAMERA_READ_RETRY_ATTEMPTS,
+    delay: float = CAMERA_READ_RETRY_DELAY,
+) -> tuple[np.ndarray | None, int]:
+    """Tolerate transient AVFoundation frame drops before reconnecting."""
+
+    failures = 0
+    for attempt in range(max(1, attempts)):
+        if stop_event.is_set():
+            return None, failures
+        try:
+            ok, frame = capture.read()
+        except Exception:
+            ok, frame = False, None
+        if ok and frame is not None and getattr(frame, "size", 0) > 0:
+            if stop_event.is_set():
+                return None, failures
+            return frame, failures
+        failures += 1
+        if attempt + 1 < max(1, attempts) and stop_event.wait(max(0.0, delay)):
+            return None, failures
+    return None, failures
+
+
+def _reopen_camera_with_retries(
+    open_index,
+    camera_index: int,
+    stop_event,
+    attempts: int = CAMERA_RECONNECT_ATTEMPTS,
+    delay: float = CAMERA_RECONNECT_DELAY,
+):
+    """Try to reacquire the same physical camera without switching devices."""
+
+    completed_attempts = 0
+    for attempt in range(max(1, attempts)):
+        if stop_event.is_set():
+            break
+        completed_attempts += 1
+        try:
+            capture = open_index(camera_index)
+        except Exception:
+            capture = None
+        if capture is not None:
+            return capture, completed_attempts
+        if attempt + 1 < max(1, attempts) and stop_event.wait(max(0.0, delay)):
+            break
+    return None, completed_attempts
+
+
 def _camera_process(
     preferred_index: int | None,
     stop_event: mp.Event,
@@ -70,43 +129,124 @@ def _camera_process(
 ) -> None:
     """Child-process entry point; imports OpenCV outside the Pygame process."""
 
-    import cv2
+    from .app_logging import configure_logging
 
-    from emotion_recognition import (
-        CAMERA_FRAME_HEIGHT,
-        CAMERA_FRAME_WIDTH,
-        EMOTION_LABELS_EN,
-        EmotionRecognitionApp,
-        box_size,
-        open_camera,
-    )
+    logger = configure_logging()
+    output_queue.cancel_join_thread()
+    logger.info("Camera inference process started; preferred index=%s", preferred_index)
 
-    app: EmotionRecognitionApp | None = None
-    capture: cv2.VideoCapture | None = None
+    app = None
+    capture = None
     active_index: int | None = None
     frame_number = 0
     smoothed_fps = 0.0
     try:
         _queue_latest(output_queue, CameraSnapshot(status="loading_models"))
+        dependency_started = time.perf_counter()
+        import cv2
+
+        from emotion_recognition import (
+            CAMERA_FRAME_HEIGHT,
+            CAMERA_FRAME_WIDTH,
+            EMOTION_LABELS_EN,
+            EmotionRecognitionApp,
+            _open_camera_index,
+            box_size,
+            open_camera,
+        )
+        logger.info(
+            "Camera AI dependencies loaded in %.3fs",
+            time.perf_counter() - dependency_started,
+        )
+
+        def configure_capture(active_capture) -> tuple[int, int]:
+            active_capture.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_FRAME_WIDTH)
+            active_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_FRAME_HEIGHT)
+            return (
+                int(active_capture.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                int(active_capture.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+            )
+
+        model_started = time.perf_counter()
         app = EmotionRecognitionApp()
+        logger.info(
+            "Camera AI models initialized in %.3fs",
+            time.perf_counter() - model_started,
+        )
         if stop_event.is_set():
             return
 
         _queue_latest(output_queue, CameraSnapshot(status="opening_camera"))
+        camera_started = time.perf_counter()
         capture, active_index = open_camera(preferred_index)
-        capture.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_FRAME_WIDTH)
-        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_FRAME_HEIGHT)
-        width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        width, height = configure_capture(capture)
+        logger.info(
+            "Camera ready: index=%s resolution=%sx%s open_time=%.3fs",
+            active_index,
+            width,
+            height,
+            time.perf_counter() - camera_started,
+        )
+        last_heartbeat = 0.0
 
         while not stop_event.is_set():
             started = time.perf_counter()
-            ok, frame = capture.read()
-            if not ok or frame is None:
-                raise RuntimeError(
-                    "カメラ映像を取得できません。"
-                    "カメラを使用中のアプリを閉じて、再実行してください。"
+            frame, read_failures = _read_frame_with_retries(
+                capture,
+                stop_event,
+            )
+            if frame is None:
+                if stop_event.is_set():
+                    return
+                logger.warning(
+                    "Camera returned no valid frame %s consecutive times; "
+                    "reconnecting index=%s",
+                    read_failures,
+                    active_index,
                 )
+                _queue_latest(
+                    output_queue,
+                    CameraSnapshot(
+                        status="reconnecting",
+                        camera_index=active_index,
+                        resolution=(width, height),
+                        error="カメラ映像を再接続しています…",
+                    ),
+                )
+                try:
+                    capture.release()
+                except Exception:
+                    logger.exception("Camera release failed before reconnect")
+                capture = None
+                capture, reconnect_attempts = _reopen_camera_with_retries(
+                    _open_camera_index,
+                    active_index,
+                    stop_event,
+                )
+                if stop_event.is_set():
+                    return
+                if capture is None:
+                    raise RuntimeError(
+                        "カメラ映像を再取得できません。"
+                        f"index={active_index} を{reconnect_attempts}回再接続しました。"
+                        "カメラを使用中のアプリを閉じて、ゲームを再起動してください。"
+                    )
+                width, height = configure_capture(capture)
+                logger.info(
+                    "Camera reconnected: index=%s attempts=%s resolution=%sx%s",
+                    active_index,
+                    reconnect_attempts,
+                    width,
+                    height,
+                )
+                continue
+            if read_failures:
+                logger.info(
+                    "Camera frame stream recovered after %s failed read(s)",
+                    read_failures,
+                )
+            if stop_event.is_set():
+                return
 
             frame = cv2.flip(frame, 1)
             annotated = app.process_frame(
@@ -150,6 +290,20 @@ def _camera_process(
                     candidate = EMOTION_LABELS_EN[primary.top_index]
                     confidence = primary.top_confidence
 
+            heartbeat_now = time.monotonic()
+            if heartbeat_now - last_heartbeat >= CAMERA_HEARTBEAT_INTERVAL:
+                logger.info(
+                    "Camera heartbeat: frame=%s ai_fps=%.1f faces=%s "
+                    "emotion=%s candidate=%s confidence=%.3f",
+                    frame_number,
+                    smoothed_fps,
+                    len(tracks),
+                    emotion or "unknown",
+                    candidate or emotion or "none",
+                    confidence,
+                )
+                last_heartbeat = heartbeat_now
+
             preview = cv2.resize(
                 annotated,
                 (
@@ -176,6 +330,7 @@ def _camera_process(
                 ),
             )
     except Exception as error:  # Keep the keyboard-only game usable.
+        logger.exception("Camera inference process failed")
         _queue_latest(
             output_queue,
             CameraSnapshot(
@@ -186,16 +341,23 @@ def _camera_process(
         )
     finally:
         if capture is not None:
-            capture.release()
+            try:
+                capture.release()
+            except Exception:
+                logger.exception("Camera release failed during worker cleanup")
         if app is not None:
-            app.close()
+            try:
+                app.close()
+            except Exception:
+                logger.exception("Model cleanup failed during worker shutdown")
+        logger.info("Camera inference process stopped")
 
 
 class CameraWorker:
     """Own the camera and AI models in a separate spawned process.
 
     Pygame only reads snapshots. A slow inference frame therefore never blocks
-    the 60 FPS window event loop, and OpenCV cannot conflict with Pygame's SDL.
+    the configured game loop, and OpenCV cannot conflict with Pygame's SDL.
     """
 
     def __init__(self, camera_index: int | None = None) -> None:
@@ -205,26 +367,46 @@ class CameraWorker:
         self._queue = self._context.Queue(maxsize=2)
         self._process: mp.Process | None = None
         self._snapshot = CameraSnapshot()
+        self._closed = False
 
     def start(self) -> None:
+        if self._closed:
+            raise RuntimeError("CameraWorker cannot be restarted after it is stopped")
         if self._process is not None and self._process.is_alive():
             return
         self._stop_event.clear()
-        self._process = self._context.Process(
+        process = self._context.Process(
             target=_camera_process,
             args=(self.camera_index, self._stop_event, self._queue),
             name="emotion-runner-camera",
             daemon=True,
         )
-        self._process.start()
+        process.start()
+        self._process = process
 
     def stop(self, timeout: float = 4.0) -> None:
+        if self._closed:
+            return
         self._stop_event.set()
         if self._process is not None:
-            self._process.join(timeout)
-            if self._process.is_alive():
-                self._process.terminate()
-                self._process.join(1.0)
+            process = self._process
+            process.join(timeout)
+            if process.is_alive():
+                process.terminate()
+                process.join(1.0)
+            if process.is_alive() and hasattr(process, "kill"):
+                process.kill()
+                process.join(1.0)
+            if process.is_alive():
+                logging.getLogger("emotion_runner").critical(
+                    "Camera inference process is still alive after kill()"
+                )
+            else:
+                process.close()
+                self._process = None
+        self._queue.close()
+        self._queue.cancel_join_thread()
+        self._closed = True
 
     def latest(self) -> CameraSnapshot:
         while True:
@@ -240,6 +422,14 @@ class CameraWorker:
             self._snapshot = replace(
                 self._snapshot,
                 status="error",
+                rgb_frame=None,
+                emotion=None,
+                candidate=None,
+                confidence=0.0,
+                uncertain=True,
+                features=None,
+                face_count=0,
+                ai_fps=0.0,
                 error="カメラ認識プロセスが停止しました。キーボード操作は使用できます。",
             )
         return replace(self._snapshot)

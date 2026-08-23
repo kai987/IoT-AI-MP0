@@ -5,14 +5,14 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from .app_paths import app_support_dir, high_score_path, resource_root
 
 # ---------------------------------------------------------------------------
 # ゲームウィンドウとフレームレート / 游戏窗口与刷新率
 # ---------------------------------------------------------------------------
 WINDOW_WIDTH = 1280  # Pygameウィンドウの幅（ピクセル） / Pygame窗口宽度（像素）
 WINDOW_HEIGHT = 720  # Pygameウィンドウの高さ（ピクセル） / Pygame窗口高度（像素）
-TARGET_FPS = 120  # ゲpームループの目標FPS / 游戏循环的目标帧率
+TARGET_FPS = 120  # ゲームループの目標FPS / 游戏循环的目标帧率
 ANALYZE_EVERY_N_FRAMES = 2  # 完全な表情分析を実行するフレーム間隔 / 执行完整表情分析的帧间隔
 WINDOW_TITLE = "Emotion Runner - Facial Expression Parkour"  # ウィンドウタイトル / 窗口标题
 
@@ -96,7 +96,7 @@ ANGER_BROW_FURROW_THRESHOLD = 0.75  # 怒り：最低眉寄せ値 / 怒り：最
 # CAMERA_INDEX=None でデバイス名からMacBook内蔵カメラを自動選択。0や1にも固定できます。 / CAMERA_INDEX=None 时按设备名称自动选择MacBook内置摄像头；也可改为0、1等。
 # コマンドラインの --camera でこのデフォルト値を一時的に上書きできます。 / 命令行的 --camera 参数仍可临时覆盖这里的默认值。
 # ---------------------------------------------------------------------------
-CAMERA_INDEX: int | None = 1  # デフォルトのカメラindex / 默认摄像头index
+CAMERA_INDEX: int | None = None  # デフォルトのカメラindex。Noneは自動選択 / 默认摄像头index；None为自动选择
 CAMERA_PREVIEW_WIDTH = 320  # カメラプレビューの幅 / 摄像头预览宽度
 CAMERA_PREVIEW_HEIGHT = 180  # カメラプレビューの高さ / 摄像头预览高度
 CAMERA_PANEL_X = WINDOW_WIDTH - CAMERA_PREVIEW_WIDTH - 28  # プレビュー左端のX座標 / 预览左边X坐标
@@ -135,9 +135,9 @@ COIN_MAX_INTERVAL = 2.80  # コインの最大生成間隔 / 金币最大生成�
 # ---------------------------------------------------------------------------
 # プロジェクトファイル、ハイスコア、日本語フォント候補 / 项目文件、最高分与日文字体候选路径
 # ---------------------------------------------------------------------------
-PROJECT_ROOT = Path(__file__).resolve().parents[1]  # プロジェクトのルートフォルダ / 项目根目录
-DATA_DIR = Path(__file__).resolve().parent / "data"  # ゲームデータフォルダ / 游戏数据目录
-HIGH_SCORE_PATH = DATA_DIR / "high_score.json"  # ハイスコア保存ファイル / 最高分保存文件
+PROJECT_ROOT = resource_root()  # 読み取り専用リソースのルート / 只读资源根目录
+DATA_DIR = app_support_dir()  # 書き込み可能なユーザーデータフォルダ / 可写用户数据目录
+HIGH_SCORE_PATH = high_score_path()  # ハイスコア保存ファイル / 最高分保存文件
 
 FONT_CANDIDATES = (  # 日本語フォントの検索順 / 日文字体搜索顺序
     "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",

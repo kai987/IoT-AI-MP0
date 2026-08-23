@@ -3,8 +3,13 @@
 
 # Python virtual environments
 .venv/
+.venv-app/
 venv/
 env/
+
+# PyInstaller output
+/build/
+/dist/
 
 # Python caches and test artifacts
 __pycache__/

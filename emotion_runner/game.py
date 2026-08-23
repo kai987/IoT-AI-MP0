@@ -14,6 +14,7 @@ import numpy as np
 import pygame
 
 from . import settings
+from . import app_paths
 from .action_controller import (
     ActionController,
     ActionDecision,
@@ -510,7 +511,7 @@ class EmotionRunnerGame:
         pygame.draw.rect(self.screen, settings.PANEL, outer, border_radius=14)
         pygame.draw.rect(self.screen, settings.CYAN, outer, 2, border_radius=14)
 
-        if self.snapshot.rgb_frame is not None:
+        if self.snapshot.status == "running" and self.snapshot.rgb_frame is not None:
             frame = self.snapshot.rgb_frame
             camera_surface = pygame.surfarray.make_surface(
                 np.transpose(frame, (1, 0, 2))
@@ -527,6 +528,7 @@ class EmotionRunnerGame:
                 "starting": "カメラを準備中…",
                 "loading_models": "AIモデルを読込中…",
                 "opening_camera": "MacBookカメラを起動中…",
+                "reconnecting": "カメラを再接続中…",
                 "disabled": "カメラは無効です",
                 "error": "カメラエラー",
             }
@@ -883,16 +885,34 @@ class EmotionRunnerGame:
 
     @staticmethod
     def _load_high_score() -> int:
+        app_paths.migrate_legacy_high_score()
         try:
-            data = json.loads(settings.HIGH_SCORE_PATH.read_text(encoding="utf-8"))
+            data = json.loads(
+                app_paths.high_score_path().read_text(encoding="utf-8")
+            )
             return max(0, int(data.get("high_score", 0)))
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return 0
 
     @staticmethod
     def _save_high_score(high_score: int) -> None:
-        settings.DATA_DIR.mkdir(parents=True, exist_ok=True)
-        settings.HIGH_SCORE_PATH.write_text(
-            json.dumps({"high_score": int(high_score)}, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
+        path = app_paths.high_score_path()
+        temporary_path = path.with_suffix(".tmp")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary_path.write_text(
+                json.dumps(
+                    {"high_score": int(high_score)},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            temporary_path.replace(path)
+        except OSError:
+            # A read-only or unavailable user directory must not end the game.
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass

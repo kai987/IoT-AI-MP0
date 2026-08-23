@@ -53,9 +53,72 @@ python3 -m pip install -r requirements.txt
 
 `requirements.txt` は `opencv-contrib-python==4.13.0.92` と `mediapipe==0.10.35` を使用します。`opencv-python` と `opencv-contrib-python` を同時に入れると `cv2` が競合するため、contrib版だけを使用します。
 
+## macOSアプリのビルド
+
+PyInstallerの `--windowed`、`--onedir` 構成で、Finderからダブルクリックできる `dist/Emotion Runner.app` を作成できます。ゲーム用のクリーンなPython 3.12環境を推奨します。
+
+### ビルド環境の作成
+
+```bash
+python3.12 -m venv .venv-app
+source .venv-app/bin/activate
+python -m pip install --upgrade pip wheel
+python -m pip install -r requirements-app.txt
+```
+
+`requirements-app.txt` にはゲーム、カメラ、AI推論、アプリ作成に必要な直接依存関係だけを記載しています。JupyterとIPythonは含みません。matplotlibはMediaPipeの依存関係として自動的に導入されます。また、OpenCVは `opencv-contrib-python` だけを使用します。
+
+完成したmacOSアプリでは、MediaPipeの描画・音声・ドキュメント用の未使用モジュールを同梱せず、Face Landmarkerに必要な部分だけを起動時に読み込みます。推論モデル、前処理、閾値、表情ラベルは変更しません。
+
+### ビルドと起動
+
+```bash
+scripts/build_macos_app.sh
+open "dist/Emotion Runner.app"
+```
+
+カメラを起動せずにキーボード操作だけを確認する場合：
+
+```bash
+open "dist/Emotion Runner.app" --args --no-camera
+```
+
+ビルドスクリプトは単体テスト、ソース版smoke test、PyInstallerビルド、アプリ版smoke test、Info.plistのカメラ説明、コード署名を順に確認します。スクリプト自身は実カメラを起動しません。
+
+### カメラ権限
+
+初回のカメラ起動時にmacOSの権限ダイアログが表示されます。拒否した場合や映像を取得できない場合も、ゲームはSpace、S、A、Dによるキーボード操作を継続できます。後から許可する場合は、次を開いてください。
+
+```text
+システム設定
+→ プライバシーとセキュリティ
+→ カメラ
+→ Emotion Runner
+```
+
+自動カメラ選択では、利用できる場合だけFFmpegからAVFoundationのデバイス名を取得します。FinderのPATHにFFmpegがない場合やHomebrewをインストールしていない場合は、OpenCVでindex 0～5を順に探索するため、FFmpegは必須ではありません。手動指定には `open "dist/Emotion Runner.app" --args --camera 0` を使用できます。
+
+### ユーザーデータとログ
+
+アプリ内のリソースは読み取り専用として扱い、最高得点、ログ、スクリーンショットを `.app` の中へ書き込みません。
+
+```text
+最高得点：~/Library/Application Support/Emotion Runner/high_score.json
+実行ログ：~/Library/Logs/Emotion Runner/EmotionRunner.log
+スクリーンショット：~/Pictures/Emotion Runner/
+```
+
+自動テストでは `EMOTION_RUNNER_DATA_DIR` 環境変数で最高得点の保存先を一時ディレクトリに変更できます。旧 `emotion_runner/data/high_score.json` が存在し、新しい保存先にまだファイルがない場合は、初回起動時にコピーします。
+
+### CPUアーキテクチャと配布
+
+ビルド結果は、ビルドに使ったPythonとネイティブwheelのCPUアーキテクチャを引き継ぎます。Apple Siliconではarm64、Intel Macではx86_64のPython環境を別々に用意してビルドしてください。この手順はuniversal2アプリを生成しません。
+
+通常のローカルビルドはPyInstallerによるad-hoc署名で動作確認できます。第三者へ配布する場合は、`CODESIGN_IDENTITY` にDeveloper ID Application証明書名を設定して再ビルドし、Appleのnotarizationとstaplingを別途実施してください。Apple ID、Team ID、パスワード、証明書名はリポジトリへ保存しないでください。
+
 ## Emotion Runner 第一版
 
-1280×720のPygameウィンドウで動作する、表情操作の自動走行ゲームです。プレイヤーの初期ライフは5です。カメラ・OpenCV・MediaPipeは独立したPythonプロセスで実行し、Pygame側は60 FPSで入力と描画を続けます。この分離により、AI推論中もゲームウィンドウの終了・一時停止操作が固まりにくくなります。
+1280×720のPygameウィンドウで動作する、表情操作の自動走行ゲームです。プレイヤーの初期ライフは5です。カメラ・OpenCV・MediaPipeは独立したPythonプロセスで実行し、Pygame側は設定値の120 FPSを上限として入力と描画を続けます。この分離により、AI推論中もゲームウィンドウの終了・一時停止操作が固まりにくくなります。
 
 起動：
 
@@ -87,7 +150,7 @@ MacBook内蔵カメラはAVFoundationの名前から自動選択します。手�
 開始画面の「スタート」とゲームオーバー画面の「リスタート」は、マウスでもクリックできます。
 開始画面の音量「－」「＋」ボタンでは、BGMとすべての効果音を10%単位で0%から100%まで調整できます。ミュート中に音量ボタンを押すとミュートを解除します。
 
-画面右上にはカメラ映像、表情、確信度、AI FPSを表示します。表情の確信度や上位2クラス差が不足しているときは「判定不能」と表示します。認識の一時的な揺れでは動作を0.45秒だけ保持し、その間に同じ表情へ戻れば動作を継続します。最初の30秒はジャンプ障害物が中心で、30秒後に木箱と敵、60秒後に大型障害物を追加します。
+画面右上にはカメラ映像、表情、確信度、AI FPSを表示します。表情の確信度や上位2クラス差が不足しているときは「判定不能」と表示します。認識の一時的な揺れでは動作を0.45秒だけ保持し、その間に同じ表情へ戻れば動作を継続します。最初の15秒はジャンプ障害物が中心で、15秒後に木箱と敵、60秒後に大型障害物を追加します。
 
 ### BGMと効果音
 
@@ -110,7 +173,7 @@ MacBook内蔵カメラはAVFoundationの名前から自動選択します。手�
 
 ### settings.py で調整できる主な項目
 
-`emotion_runner/settings.py` にゲームの調整値を集約しています。ゲーム描画は `TARGET_FPS=120`、完全な表情分析は `ANALYZE_EVERY_N_FRAMES=2`、敵と木箱の出現開始は `ENEMY_SPAWN_TIME=30.0` で調整できます。HUDは `HUD_X`, `HUD_Y`, `HUD_WIDTH=700`, `HUD_HEIGHT`、動作ヒントは `ACTION_TIP_CENTER_X`, `ACTION_TIP_CENTER_Y`, `ACTION_TIP_WIDTH`, `ACTION_TIP_HEIGHT` で位置と大きさを変更できます。現在のヒント上端はHUD下端より21px下です。
+`emotion_runner/settings.py` にゲームの調整値を集約しています。ゲーム描画は `TARGET_FPS=120`、完全な表情分析は `ANALYZE_EVERY_N_FRAMES=2`、敵と木箱の出現開始は `ENEMY_SPAWN_TIME=15.0` で調整できます。HUDは `HUD_X`, `HUD_Y`, `HUD_WIDTH=700`, `HUD_HEIGHT`、動作ヒントは `ACTION_TIP_CENTER_X`, `ACTION_TIP_CENTER_Y`, `ACTION_TIP_WIDTH`, `ACTION_TIP_HEIGHT` で位置と大きさを変更できます。現在のヒント上端はHUD下端より21px下です。
 
 音量は `AUDIO_MASTER_VOLUME`, `AUDIO_MUSIC_VOLUME`, `AUDIO_PAUSED_MUSIC_VOLUME`, `AUDIO_EFFECTS_VOLUME`, `AUDIO_MIN_VOLUME`, `AUDIO_MAX_VOLUME`, `AUDIO_VOLUME_STEP` で調整できます。カメラは `CAMERA_INDEX=None` でMacBook内蔵カメラを名前から自動選択し、0や1などの数値にするとindexを固定します。設定値の意味と単位は同ファイル内のコメントに記載しています。
 

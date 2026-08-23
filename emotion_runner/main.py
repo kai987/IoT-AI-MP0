@@ -55,18 +55,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.no_camera or args.smoke_test
         else CameraWorker(args.camera)
     )
-    camera.start()
     game = None
     try:
-        game = EmotionRunnerGame(camera=camera, seed=args.seed)
-        if args.smoke_test:
-            game.start_new_game()
-        game.run(max_frames=120 if args.smoke_test else None)
+        camera.start()
+        try:
+            game = EmotionRunnerGame(camera=camera, seed=args.seed)
+            if args.smoke_test:
+                game.start_new_game()
+            game.run(max_frames=120 if args.smoke_test else None)
+        finally:
+            if game is not None:
+                game.audio.shutdown()
     finally:
-        if game is not None:
-            game.audio.shutdown()
-        camera.stop()
-        pygame.quit()
+        try:
+            camera.stop()
+        finally:
+            pygame.quit()
     return 0
 
 
