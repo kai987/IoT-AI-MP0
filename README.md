@@ -1,7 +1,5 @@
 # MP-0 リアルタイム複数顔・表情認識
 
-学籍番号：M25W0243
-
 OpenCV DNNでカメラ映像の複数の顔を検出し、各顔の外見上の表情をリアルタイムに表示するプロジェクトです。ゲーム操作用にMediaPipe Face Landmarkerの478点と52種のblendshapeから口・眉・目の特徴量も抽出します。DeepFaceおよびTensorFlow Pythonフレームワークは使用しません。
 
 ## 推論の流れ
@@ -19,7 +17,7 @@ OpenCV DNNでカメラ映像の複数の顔を検出し、各顔の外見上の�
 
 ```text
 MP-0/
-├── MP-0_M25W0243.ipynb
+├── MP-0.ipynb
 ├── emotion_recognition.py
 ├── emotion_runner/
 │   ├── main.py               # CLI入口
@@ -215,7 +213,7 @@ if app.visible_tracks:
 
 ## Jupyter Notebookで実行
 
-`MP-0_M25W0243.ipynb` を開き、カーネルを再起動してから上から順に実行します。VS CodeではOpenCV/Cocoaの別ウィンドウを作らず、映像をNotebookの出力欄に表示します。カメラ処理はバックグラウンドで動くため、赤い `カメラを停止` ボタンが反応します。
+`MP-0.ipynb` を開き、カーネルを再起動してから上から順に実行します。VS CodeではOpenCV/Cocoaの別ウィンドウを作らず、映像をNotebookの出力欄に表示します。カメラ処理はバックグラウンドで動くため、赤い `カメラを停止` ボタンが反応します。
 
 カメラには1920×1080（1080p）を要求し、実際に取得できたフル解像度を検出・認識・保存に使います。Notebookのプレビューも1920×1080で送信し、プレビュー更新は最大12 FPSです。カメラが1080pを受理しない場合は実解像度をボタン横に表示します。
 
