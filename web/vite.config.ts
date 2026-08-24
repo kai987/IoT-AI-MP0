@@ -15,6 +15,7 @@ export default defineConfig(({ mode }) => {
       include: ["@mediapipe/tasks-vision", "onnxruntime-web/webgpu"],
     },
     build: {
+      outDir: "dist/client",
       sourcemap: false,
       target: "es2022",
       rollupOptions: {

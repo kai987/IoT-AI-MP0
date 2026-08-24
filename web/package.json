@@ -9,7 +9,8 @@
   },
   "scripts": {
     "dev": "npm run prepare:assets && vite",
-    "build": "npm run prepare:assets && vite build && vite build --config vite.site-worker.config.ts && npm run check:production",
+    "build": "npm run clean:dist && npm run prepare:assets && vite build && vite build --config vite.site-worker.config.ts && npm run check:production",
+    "clean:dist": "node scripts/clean-dist.mjs",
     "preview": "vite preview",
     "prepare:assets": "node scripts/prepare-assets.mjs",
     "verify:models": "node scripts/verify-models.mjs",

@@ -9,10 +9,11 @@ const scriptsDirectory = dirname(fileURLToPath(import.meta.url));
 const webRoot = resolve(scriptsDirectory, "..");
 const repositoryRoot = resolve(webRoot, "..");
 const distRoot = join(webRoot, "dist");
+const clientRoot = join(distRoot, "client");
 const preparedRoot = join(webRoot, "public", "generated");
 const preparedManifestPath = join(preparedRoot, "ort", "asset-manifest.json");
 const distManifestPath = join(
-  distRoot,
+  clientRoot,
   "generated",
   "ort",
   "asset-manifest.json",
@@ -106,11 +107,11 @@ async function main() {
   if (!distInfo.isDirectory()) {
     fail("dist is not a directory");
   }
-  const indexInfo = await stat(join(distRoot, "index.html")).catch((error) => {
-    fail(`dist/index.html is missing: ${error.message}`);
+  const indexInfo = await stat(join(clientRoot, "index.html")).catch((error) => {
+    fail(`dist/client/index.html is missing: ${error.message}`);
   });
   if (!indexInfo.isFile() || indexInfo.size === 0) {
-    fail("dist/index.html is empty or invalid");
+    fail("dist/client/index.html is empty or invalid");
   }
   const siteWorkerInfo = await stat(join(distRoot, "server", "index.js")).catch(
     (error) => {
@@ -132,12 +133,12 @@ async function main() {
   if (configuredBase) {
     const trimmedBase = configuredBase.replace(/^\/+|\/+$/g, "");
     const normalizedBase = trimmedBase ? `/${trimmedBase}/` : "/";
-    const indexHtml = await readFile(join(distRoot, "index.html"), "utf8");
+    const indexHtml = await readFile(join(clientRoot, "index.html"), "utf8");
     if (!indexHtml.includes(normalizedBase)) {
-      fail(`dist/index.html does not use VITE_BASE_PATH=${normalizedBase}`);
+      fail(`dist/client/index.html does not use VITE_BASE_PATH=${normalizedBase}`);
     }
     if (/(?:src|href)="\/(?:assets|generated)\//i.test(indexHtml)) {
-      fail("dist/index.html contains an asset URL outside VITE_BASE_PATH");
+      fail("dist/client/index.html contains an asset URL outside VITE_BASE_PATH");
     }
   }
 
@@ -147,7 +148,7 @@ async function main() {
   );
   const distManifest = await readJson(
     distManifestPath,
-    "dist/generated/ort/asset-manifest.json",
+    "dist/client/generated/ort/asset-manifest.json",
   );
   if (
     preparedManifest.schemaVersion !== 1 ||
@@ -176,7 +177,7 @@ async function main() {
 
     for (const [label, root] of [
       ["prepared", preparedRoot],
-      ["dist", join(distRoot, "generated")],
+      ["dist", join(clientRoot, "generated")],
     ]) {
       const path = join(root, ...entry.path.split("/"));
       const info = await stat(path).catch((error) => {
@@ -193,14 +194,14 @@ async function main() {
   }
 
   const distFiles = await walk(distRoot);
-  const generatedDistFiles = await walk(join(distRoot, "generated"));
+  const generatedDistFiles = await walk(join(clientRoot, "generated"));
   const allowedGenerated = new Set([
     "ort/asset-manifest.json",
     ...preparedManifest.files.map((entry) => entry.path),
   ]);
   for (const path of generatedDistFiles) {
     const relativePath = path
-      .slice(join(distRoot, "generated").length + 1)
+      .slice(join(clientRoot, "generated").length + 1)
       .split(sep)
       .join("/");
     if (!allowedGenerated.has(relativePath)) {
