@@ -269,3 +269,58 @@ python3 emotion_recognition.py --image "/path/to/photo.jpg"
 - 顔ランドマークとblendshape：[MediaPipe Face Landmarker](https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker/python)（Apache License 2.0）
 
 取得先URLとSHA-256は `models/MODEL_SOURCES.md` に記録しています。旧SSD/CaffeモデルとFERPlusモデルは比較用に残していますが、デフォルト実行では読み込みません。
+
+## Web版 Emotion Runner
+
+このリポジトリには、上記のPython/macOS版を置き換えるのではなく、並行して利用できるブラウザ版を `web/` に収録しています。ゲームの動作、日本語UI、表情とキーボードの操作は共通ですが、Web版はPython、OpenCV、外部推論APIを実行時に必要としません。
+
+> 中文：仓库同时保留 Python/macOS 桌面版和 `web/` 浏览器版。Web 版不是取代桌面版；两者可以并存使用。浏览器版运行时不需要 Python、OpenCV 或外部 AI API。
+
+Web版では、カメラ映像を `getUserMedia()` で取得し、フレームをWeb Workerへ渡します。Worker内のMediaPipe Face Landmarkerで顔、ランドマーク、blendshapeを得た後、ONNX Runtime WebのEmotiEffLibモデルで8表情を分類します。映像や顔画像はサーバーへ送信されず、推論結果だけがブラウザ内のゲームに渡されます。
+
+> 中文：摄像头画面会被交给 Web Worker，在浏览器本地执行 MediaPipe Face Landmarker 和 EmotiEffLib ONNX 表情分类。视频和人脸图像不会发送到服务器。
+
+キーボードモードを選ぶと、カメラの許可を求めず、AIモデルと推論用WASMも読み込みません。カメラモードでは表情操作に加え、Space / S / A / Dの予備操作も使用できます。表情分類はWebGPUを優先し、初期化できない場合はWASMへ自動的に切り替えます。
+
+### Web版の起動
+
+Node.js 24とnpm 11以上を使用します。
+
+```bash
+cd web
+npm ci
+npm run dev
+```
+
+Viteが表示する `http://localhost:5173/` を開いてください。カメラAPIは安全なコンテキストでのみ使用できるため、本番環境はHTTPSが必要です。開発時の `localhost` は例外として利用できます。LAN内のIPアドレスをHTTPで開いた場合はカメラが許可されない場合があります。
+
+検証と本番ビルド：
+
+```bash
+npm run test
+npm run check
+npm run build
+npm run preview
+
+# Vite開発サーバーのカメラ/AI Workerを検証
+npm run test:e2e:dev
+
+# 本番E2Eは本番ビルド後に実行
+npm run test:e2e
+```
+
+`npm run check` は、配布用モデル/WASMの準備とSHA-256検証、TypeScript、ESLint、Vitest、本番ビルド、配布ファイルの検査を順に実行します。E2Eは別コマンドです。詳細は [`web/README.md`](web/README.md) を参照してください。
+
+### GitHub Pages
+
+`.github/workflows/deploy-web.yml` は、`main` のWeb関連ファイルが更新されたときにNode.js 24で `npm ci` と `npm run check` を実行し、`web/dist` をGitHub Pagesへ配布します。リポジトリのPages設定は「GitHub Actions」を選択してください。
+
+### Web版のプライバシー
+
+- カメラ映像、顔画像、表情履歴を送信・アップロードしません。
+- 分析、前処理、ゲーム制御はすべて現在のタブのメモリ内で実行します。
+- アナリティクス、トラッキング、アカウント、外部AI APIは使用しません。
+- `localStorage` に保存するのは、ハイスコアと設定（音量、ミュート、操作モード、選択したカメラのデバイスID）のみです。
+- カメラを停止するかタブを閉じるとMediaStreamとWorkerを破棄します。
+
+> 中文：Web 版不上传摄像头画面、人脸图像或表情历史，不包含统计或跟踪服务。浏览器只保存最高分和用户设置；可通过浏览器的站点数据设置删除。

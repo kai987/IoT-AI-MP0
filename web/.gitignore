@@ -1,0 +1,8 @@
+node_modules/
+public/generated/models/
+public/generated/mediapipe/
+public/generated/ort/
+dist/
+coverage/
+playwright-report/
+test-results/

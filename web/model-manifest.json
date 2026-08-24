@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "files": [
+    {
+      "filename": "enet_b0_8_best_vgaf.onnx",
+      "source": "../models/enet_b0_8_best_vgaf.onnx",
+      "target": "public/generated/models/enet_b0_8_best_vgaf.onnx",
+      "sha256": "fa07e841fd06c7a67ee651ea4e6e4a3a2bb5695f47b37a7da50492526f59c898",
+      "purpose": "EmotiEffLib AffectNet eight-class expression classifier",
+      "license": "Apache-2.0; see LICENSE-EMOTIEFFLIB.txt"
+    },
+    {
+      "filename": "face_landmarker.task",
+      "source": "../models/face_landmarker.task",
+      "target": "public/generated/models/face_landmarker.task",
+      "sha256": "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff",
+      "purpose": "MediaPipe Face Landmarker model",
+      "license": "Apache-2.0; see LICENSE-MEDIAPIPE.txt"
+    },
+    {
+      "filename": "LICENSE-EMOTIEFFLIB.txt",
+      "source": "../models/LICENSE-EMOTIEFFLIB.txt",
+      "target": "public/generated/models/LICENSE-EMOTIEFFLIB.txt",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "purpose": "EmotiEffLib license notice",
+      "license": "Apache-2.0"
+    },
+    {
+      "filename": "LICENSE-MEDIAPIPE.txt",
+      "source": "../models/LICENSE-MEDIAPIPE.txt",
+      "target": "public/generated/models/LICENSE-MEDIAPIPE.txt",
+      "sha256": "8707eef0533987efc5b155d64761eeb6e20793f50b9bd1a68dad1cf4719d0ed8",
+      "purpose": "MediaPipe model license notice",
+      "license": "Apache-2.0"
+    },
+    {
+      "filename": "MODEL_SOURCES.md",
+      "source": "../models/MODEL_SOURCES.md",
+      "target": "public/generated/models/MODEL_SOURCES.md",
+      "sha256": "0962eeae9a70199e150b68be6f7ff1beb8eeef227b8c5b214f20d6a3cb982e5f",
+      "purpose": "Model provenance and checksums",
+      "license": "Project documentation"
+    }
+  ]
+}
