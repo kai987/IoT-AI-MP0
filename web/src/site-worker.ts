@@ -1,9 +1,25 @@
-interface StaticAssetBinding {
+export interface StaticAssetBinding {
   fetch(request: Request): Promise<Response>;
 }
 
-interface SiteEnvironment {
+export interface SiteEnvironment {
   readonly ASSETS: StaticAssetBinding;
+}
+
+function isDocumentRequest(request: Request): boolean {
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return false;
+  }
+
+  const accept = request.headers.get("accept") ?? "";
+  return accept.includes("text/html") || new URL(request.url).pathname === "/";
+}
+
+function indexRequest(request: Request): Request {
+  const url = new URL(request.url);
+  url.pathname = "/index.html";
+  url.search = "";
+  return new Request(url, request);
 }
 
 export function withSocialPreview(
@@ -44,10 +60,25 @@ export function withSocialPreview(
   });
 }
 
+export async function fetchSite(
+  request: Request,
+  environment: SiteEnvironment,
+): Promise<Response> {
+  const documentRequest = isDocumentRequest(request);
+  const pathname = new URL(request.url).pathname;
+  let response = await environment.ASSETS.fetch(
+    documentRequest && pathname === "/" ? indexRequest(request) : request,
+  );
+
+  if (response.status === 404 && documentRequest && pathname !== "/") {
+    response = await environment.ASSETS.fetch(indexRequest(request));
+  }
+
+  return withSocialPreview(response, request);
+}
+
 export default {
   fetch(request: Request, environment: SiteEnvironment): Promise<Response> {
-    return environment.ASSETS.fetch(request).then((response) =>
-      withSocialPreview(response, request),
-    );
+    return fetchSite(request, environment);
   },
 };
