@@ -10,6 +10,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { promisify } from "node:util";
 import {
   basename,
   dirname,
@@ -20,6 +21,7 @@ import {
   sep,
 } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gzip } from "node:zlib";
 
 const require = createRequire(import.meta.url);
 const scriptsDirectory = dirname(fileURLToPath(import.meta.url));
@@ -28,6 +30,8 @@ const repositoryRoot = resolve(webRoot, "..");
 const modelRoot = join(repositoryRoot, "models");
 const manifestPath = join(webRoot, "model-manifest.json");
 const generatedRoot = join(webRoot, "public", "generated");
+const gzipAsync = promisify(gzip);
+const sitesFileSizeLimit = 25 * 1024 * 1024;
 
 const expectedModelFiles = new Set([
   "enet_b0_8_best_vgaf.onnx",
@@ -151,6 +155,40 @@ async function copyVerified({ source, target, expectedHash, sourceLabel }) {
     sha256: targetHash,
     bytes: targetInfo.size,
     source: sourceLabel,
+  };
+}
+
+async function copyRuntimeFile({ source, filename, sourceLabel }) {
+  const sourceInfo = await stat(source).catch((error) => {
+    fail(`missing ${sourceLabel}: ${error.message}`);
+  });
+  if (!sourceInfo.isFile()) {
+    fail(`${sourceLabel} is not a regular file`);
+  }
+
+  if (sourceInfo.size <= sitesFileSizeLimit) {
+    return copyVerified({
+      source,
+      target: join(generatedRoot, "ort", filename),
+      sourceLabel,
+    });
+  }
+  if (!filename.endsWith(".wasm")) {
+    fail(`${sourceLabel} exceeds the Sites single-file size limit`);
+  }
+
+  const target = join(generatedRoot, "ort", `${filename}.gzip`);
+  const compressed = await gzipAsync(await readFile(source), { level: 9 });
+  if (compressed.byteLength > sitesFileSizeLimit) {
+    fail(`${sourceLabel} remains too large after gzip compression`);
+  }
+  await mkdir(dirname(target), { recursive: true });
+  await writeFile(target, compressed);
+  return {
+    path: toPosix(relative(generatedRoot, target)),
+    sha256: await sha256(target),
+    bytes: compressed.byteLength,
+    source: `${sourceLabel} (gzip-compressed from ${sourceInfo.size} bytes)`,
   };
 }
 
@@ -294,9 +332,9 @@ async function prepareOrtRuntime() {
     }
     assertInside(ort.root, source, `onnxruntime-web runtime ${filename}`);
     copied.push(
-      await copyVerified({
+      await copyRuntimeFile({
         source,
-        target: join(generatedRoot, "ort", filename),
+        filename,
         sourceLabel: `onnxruntime-web/dist/${filename}`,
       }),
     );

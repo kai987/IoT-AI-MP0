@@ -29,6 +29,7 @@ const expectedModelBinaries = new Set([
   "enet_b0_8_best_vgaf.onnx",
   "face_landmarker.task",
 ]);
+const sitesFileSizeLimit = 25 * 1024 * 1024;
 const textExtensions = new Set([
   ".css",
   ".html",
@@ -214,6 +215,10 @@ async function main() {
     .filter(Boolean);
   const discoveredModelBinaries = [];
   for (const path of distFiles) {
+    const fileInfo = await stat(path);
+    if (fileInfo.size > sitesFileSizeLimit) {
+      fail(`file exceeds the Sites single-file size limit: ${path.slice(distRoot.length + 1)}`);
+    }
     if (legacyFiles.has(basename(path))) {
       fail(`legacy or desktop-only model exists in dist: ${basename(path)}`);
     }

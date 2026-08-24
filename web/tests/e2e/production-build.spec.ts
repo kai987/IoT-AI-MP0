@@ -13,6 +13,7 @@ test("production build serves local models and runtimes without 404 responses", 
     "/generated/models/enet_b0_8_best_vgaf.onnx",
     "/generated/models/face_landmarker.task",
     "/generated/ort/asset-manifest.json",
+    "/generated/ort/ort-wasm-simd-threaded.jsep.wasm.gzip",
     "/generated/mediapipe/vision_wasm_module_internal.js",
     "/generated/mediapipe/vision_wasm_module_internal.wasm",
   ];

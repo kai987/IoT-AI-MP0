@@ -25,7 +25,12 @@ export interface OrtSessionLike {
 export interface OrtRuntimeLike {
   readonly env: {
     readonly wasm: {
-      wasmPaths?: string;
+      wasmPaths?:
+        | string
+        | Readonly<{
+            mjs?: string;
+            wasm?: string;
+          }>;
       numThreads?: number;
       proxy?: boolean;
     };
@@ -52,9 +57,40 @@ export interface EmotionClassifierOptions {
 
 type OrtModule = typeof import("onnxruntime-web/webgpu");
 
-async function loadOrtRuntime(): Promise<OrtRuntimeLike> {
-  const module: OrtModule = await import("onnxruntime-web/webgpu");
+async function loadOrtRuntime(webGpu: boolean): Promise<OrtRuntimeLike> {
+  const module: OrtModule = webGpu
+    ? await import("onnxruntime-web/webgpu")
+    : await import("onnxruntime-web/wasm");
   return module as unknown as OrtRuntimeLike;
+}
+
+function canDecompressGzip(): boolean {
+  return typeof DecompressionStream !== "undefined";
+}
+
+async function prepareWebGpuWasmPaths(
+  ort: OrtRuntimeLike,
+  wasmRoot: string,
+): Promise<void> {
+  const compressedWasmUrl = new URL(
+    "ort-wasm-simd-threaded.jsep.wasm.gzip",
+    wasmRoot,
+  ).href;
+  const response = await fetch(compressedWasmUrl);
+  if (!response.ok || response.body === null) {
+    throw new Error(
+      `Compressed ONNX Runtime WebGPU binary could not be loaded (${response.status})`,
+    );
+  }
+  const stream = response.body.pipeThrough(new DecompressionStream("gzip"));
+  const wasmBuffer = await new Response(stream).arrayBuffer();
+  const wasmUrl = URL.createObjectURL(
+    new Blob([wasmBuffer], { type: "application/wasm" }),
+  );
+  ort.env.wasm.wasmPaths = {
+    mjs: new URL("ort-wasm-simd-threaded.jsep.mjs", wasmRoot).href,
+    wasm: wasmUrl,
+  };
 }
 
 function currentLocationHref(): string {
@@ -145,11 +181,22 @@ export class EmotionClassifier {
   public static async create(
     options: EmotionClassifierOptions,
   ): Promise<EmotionClassifier> {
-    const ort = options.ort ?? (await loadOrtRuntime());
     const documentUrl = currentLocationHref();
     const modelUrl = resolveLocalAssetUrl(options.modelUrl, documentUrl);
     const wasmRoot = resolveLocalAssetUrl(options.ortWasmRoot, documentUrl);
-    ort.env.wasm.wasmPaths = wasmRoot.endsWith("/") ? wasmRoot : `${wasmRoot}/`;
+    const normalizedWasmRoot = wasmRoot.endsWith("/")
+      ? wasmRoot
+      : `${wasmRoot}/`;
+    const requestedWebGpu = options.webGpuAvailable ?? browserHasWebGpu();
+    const bundledRuntime = options.ort === undefined;
+    const mayUseWebGpu =
+      requestedWebGpu && (!bundledRuntime || canDecompressGzip());
+    const ort = options.ort ?? (await loadOrtRuntime(mayUseWebGpu));
+    if (bundledRuntime && mayUseWebGpu) {
+      await prepareWebGpuWasmPaths(ort, normalizedWasmRoot);
+    } else {
+      ort.env.wasm.wasmPaths = normalizedWasmRoot;
+    }
     const hardwareConcurrency =
       typeof navigator === "undefined" ? 1 : navigator.hardwareConcurrency || 1;
     ort.env.wasm.numThreads =
@@ -158,8 +205,10 @@ export class EmotionClassifier {
         : 1;
     ort.env.wasm.proxy = false;
 
-    const mayUseWebGpu = options.webGpuAvailable ?? browserHasWebGpu();
-    let fallbackReason: string | null = null;
+    let fallbackReason: string | null =
+      requestedWebGpu && !mayUseWebGpu
+        ? "WebGPU runtime compression is unsupported; using WASM"
+        : null;
     if (mayUseWebGpu) {
       try {
         const webGpuSession = await ort.InferenceSession.create(modelUrl, {
