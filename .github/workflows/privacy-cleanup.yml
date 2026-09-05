@@ -1,0 +1,147 @@
+name: One-time privacy cleanup
+
+on:
+  push:
+    paths:
+      - ".github/workflows/privacy-cleanup.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Remove personal identifiers
+        shell: bash
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+
+          import json
+          from pathlib import Path
+
+          root = Path('.')
+          old_id = 'M25W0243'
+          old_user = 'paulasmith'
+          old_project_path = '/Users/paulasmith/Documents/KCG/2026春/IoTと人工知能(a)/MP-0'
+
+          rename_pairs = [
+              ('MP-0_M25W0243.ipynb', 'MP-0.ipynb'),
+              ('MP-0_M25W0243_test_result.jpg', 'MP-0_test_result.jpg'),
+          ]
+          for old_name, new_name in rename_pairs:
+              src = root / old_name
+              dst = root / new_name
+              if src.exists() and not dst.exists():
+                  src.rename(dst)
+              elif src.exists() and dst.exists():
+                  src.unlink()
+
+          text_suffixes = {
+              '.md', '.py', '.ipynb', '.txt', '.yml', '.yaml', '.json',
+              '.spec', '.sh', '.toml', '.ini', '.cfg', '.xml', '.html',
+              '.css', '.js', '.ts', '.tsx', '.jsx', '.gitignore'
+          }
+          text_names = {'.gitignore'}
+
+          for path in root.rglob('*'):
+              if not path.is_file() or '.git' in path.parts:
+                  continue
+              if path.suffix.lower() not in text_suffixes and path.name not in text_names:
+                  continue
+              try:
+                  text = path.read_text(encoding='utf-8')
+              except UnicodeDecodeError:
+                  continue
+
+              # Remove student-number lines entirely rather than replacing the value.
+              text = ''.join(
+                  line for line in text.splitlines(keepends=True)
+                  if '学籍番号' not in line and 'student id' not in line.lower()
+              )
+
+              text = text.replace(old_project_path, '/path/to/IoT-AI-MP0')
+              text = text.replace('/Users/paulasmith', '~')
+              text = text.replace('MP-0_M25W0243.ipynb', 'MP-0.ipynb')
+              text = text.replace('MP-0_M25W0243_test_result.jpg', 'MP-0_test_result.jpg')
+              text = text.replace('MP-0_M25W0243_emotion_result.jpg', 'MP-0_emotion_result.jpg')
+              text = text.replace('STUDENT_ID', 'APP_ID')
+              text = text.replace(old_id, 'Emotion Runner')
+              text = text.replace('f"MP-0_{APP_ID}_emotion_result.jpg"', '"MP-0_emotion_result.jpg"')
+              text = text.replace("f'MP-0_{APP_ID}_emotion_result.jpg'", "'MP-0_emotion_result.jpg'")
+
+              path.write_text(text, encoding='utf-8')
+
+          # Remove cached outputs/environment details from notebooks while keeping code cells.
+          for notebook in root.glob('*.ipynb'):
+              try:
+                  data = json.loads(notebook.read_text(encoding='utf-8'))
+              except Exception:
+                  continue
+              changed = False
+              for cell in data.get('cells', []):
+                  if cell.get('cell_type') == 'code':
+                      if cell.get('outputs'):
+                          cell['outputs'] = []
+                          changed = True
+                      if cell.get('execution_count') is not None:
+                          cell['execution_count'] = None
+                          changed = True
+              metadata = data.get('metadata', {})
+              if 'widgets' in metadata:
+                  metadata.pop('widgets', None)
+                  changed = True
+              if changed:
+                  notebook.write_text(
+                      json.dumps(data, ensure_ascii=False, indent=1) + '\n',
+                      encoding='utf-8',
+                  )
+
+          # Avoid recommitting generated camera-result images in future runs.
+          gitignore = root / '.gitignore'
+          existing = gitignore.read_text(encoding='utf-8') if gitignore.exists() else ''
+          additions = ['*_emotion_result.jpg', '*.DS_Store']
+          for item in additions:
+              if item not in existing.splitlines():
+                  if existing and not existing.endswith('\n'):
+                      existing += '\n'
+                  existing += item + '\n'
+          gitignore.write_text(existing, encoding='utf-8')
+
+          # Fail the workflow if the known identifiers still exist in tracked text/files.
+          leftovers = []
+          for path in root.rglob('*'):
+              if not path.is_file() or '.git' in path.parts:
+                  continue
+              if old_id in path.name or old_user in path.name:
+                  leftovers.append(str(path))
+                  continue
+              try:
+                  raw = path.read_bytes()
+              except OSError:
+                  continue
+              if old_id.encode() in raw or old_user.encode() in raw:
+                  leftovers.append(str(path))
+          if leftovers:
+              raise SystemExit('Privacy cleanup incomplete: ' + ', '.join(sorted(set(leftovers))))
+          PY
+
+      - name: Commit cleanup
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No privacy changes needed."
+            exit 0
+          fi
+          git commit -m "Remove personal information from repository"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
