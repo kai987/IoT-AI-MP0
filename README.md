@@ -45,7 +45,7 @@ MP-0/
 ## セットアップ
 
 ```bash
-cd "/Users/paulasmith/Documents/KCG/2026春/IoTと人工知能(a)/MP-0"
+cd "/path/to/IoT-AI-MP0"
 python3 -m pip install -r requirements.txt
 ```
 
@@ -121,7 +121,7 @@ open "dist/Emotion Runner.app" --args --no-camera
 起動：
 
 ```bash
-cd "/Users/paulasmith/Documents/KCG/2026春/IoTと人工知能(a)/MP-0"
+cd "/path/to/IoT-AI-MP0"
 python3 -m emotion_runner
 ```
 
@@ -222,7 +222,7 @@ Notebookの `CAMERA_INDEX = None` でAVFoundationのデバイス名からMacBook
 Notebookの操作：
 
 - `カメラを停止`：カメラを解放してバックグラウンド処理を終了
-- `画像を保存`：認識結果を `MP-0_M25W0243_emotion_result.jpg` に保存
+- `画像を保存`：認識結果を `MP-0_emotion_result.jpg` に保存
 
 ## Pythonファイルを直接実行
 
