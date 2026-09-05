@@ -224,7 +224,7 @@ class ModelIntegrationTests(unittest.TestCase):
         self.assertAlmostEqual(float(probabilities.sum()), 1.0, places=5)
 
     def test_existing_project_image_runs_end_to_end(self) -> None:
-        image_path = Path(__file__).resolve().parents[1] / "MP-0_M25W0243_test_result.jpg"
+        image_path = Path(__file__).resolve().parents[1] / "MP-0_test_result.jpg"
         image = cv2.imread(str(image_path))
         self.assertIsNotNone(image)
 
@@ -235,7 +235,7 @@ class ModelIntegrationTests(unittest.TestCase):
         self.assertEqual(result.shape, image.shape)
 
     def test_face_landmarker_returns_action_features(self) -> None:
-        image_path = Path(__file__).resolve().parents[1] / "MP-0_M25W0243_test_result.jpg"
+        image_path = Path(__file__).resolve().parents[1] / "MP-0_test_result.jpg"
         image = cv2.imread(str(image_path))
         detections = self.app.detect_faces(image)
         largest = max(detections, key=lambda item: er.box_size(item.box))
