@@ -21,4 +21,6 @@ htmlcov/
 
 # Runtime-generated game and camera output
 /emotion_runner/data/high_score.json
-/MP-0_M25W0243_emotion_result.jpg
+/MP-0_emotion_result.jpg
+*_emotion_result.jpg
+*.DS_Store

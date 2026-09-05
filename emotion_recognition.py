@@ -43,7 +43,7 @@ with warnings.catch_warnings():
     except ImportError:
         mp = None
 
-STUDENT_ID = "M25W0243"
+APP_ID = "Emotion Runner"
 PROJECT_DIR = Path(__file__).resolve().parent
 MODELS_DIR = PROJECT_DIR / "models"
 
@@ -93,8 +93,8 @@ LOWER_INNER_LIP_INDEX = 14
 LEFT_MOUTH_CORNER_INDEX = 61
 RIGHT_MOUTH_CORNER_INDEX = 291
 
-WINDOW_NAME = f"{STUDENT_ID} - Real-time Multi-face Emotion Recognition"
-DEFAULT_SCREENSHOT_PATH = PROJECT_DIR / f"MP-0_{STUDENT_ID}_emotion_result.jpg"
+WINDOW_NAME = f"{APP_ID} - Real-time Multi-face Emotion Recognition"
+DEFAULT_SCREENSHOT_PATH = PROJECT_DIR / "MP-0_emotion_result.jpg"
 CAMERA_FRAME_WIDTH = 1920
 CAMERA_FRAME_HEIGHT = 1080
 NOTEBOOK_PREVIEW_WIDTH = 1920
@@ -1503,7 +1503,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     if args.image is not None:
-        output_path = args.output or PROJECT_DIR / f"MP-0_{STUDENT_ID}_image_result.jpg"
+        output_path = args.output or PROJECT_DIR / f"MP-0_{APP_ID}_image_result.jpg"
         process_still_image(args.image, output_path)
     else:
         run_camera(camera_index=args.camera)
