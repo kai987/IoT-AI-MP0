@@ -138,7 +138,8 @@ async function main() {
     if (!indexHtml.includes(normalizedBase)) {
       fail(`dist/client/index.html does not use VITE_BASE_PATH=${normalizedBase}`);
     }
-    if (/(?:src|href)="\/(?:assets|generated)\//i.test(indexHtml)) {
+    // ルート配信では /assets/ は正しい / 根路径部署时 /assets/ 是合法路径。
+    if (normalizedBase !== "/" && /(?:src|href)="\/(?:assets|generated)\//i.test(indexHtml)) {
       fail("dist/client/index.html contains an asset URL outside VITE_BASE_PATH");
     }
   }
