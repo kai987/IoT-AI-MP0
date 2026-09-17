@@ -53,10 +53,20 @@ describe("HighScoreStorage", () => {
 });
 
 describe("SettingsStorage", () => {
+  it("migrates old settings and validates newly added preferences", () => {
+    const storage = new MemoryStorage();
+    storage.values.set("emotion-runner.web.settings", JSON.stringify({ version: 1, masterVolume: 0.7, muted: false, cameraDeviceId: null, controlMode: "camera", performanceProfile: "invalid", emotionThresholds: { happiness: 2, anger: "broken" } }));
+    const settings = new SettingsStorage(storage).load();
+    expect(settings.performanceProfile).toBe("balanced");
+    expect(settings.emotionThresholds.happiness).toBe(0.85);
+    expect(settings.emotionThresholds.anger).toBe(0.45);
+    expect(settings.emotionThresholds.neutral).toBe(0.45);
+  });
   it("round-trips camera, mode, mute, and volume preferences", () => {
     const storage = new MemoryStorage();
     const settings = new SettingsStorage(storage);
     const saved = settings.save({
+      ...DEFAULT_USER_SETTINGS,
       masterVolume: 0.6,
       muted: true,
       cameraDeviceId: "camera-2",
@@ -88,6 +98,7 @@ describe("SettingsStorage", () => {
     expect(settings.load()).toEqual(DEFAULT_USER_SETTINGS);
     expect(() =>
       settings.save({
+        ...DEFAULT_USER_SETTINGS,
         masterVolume: 0.4,
         muted: true,
         cameraDeviceId: "camera-private",

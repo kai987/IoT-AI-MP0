@@ -6,6 +6,7 @@ import { TouchControls } from "./TouchControls";
 export interface GameCanvasProps {
   readonly canvasRef: RefObject<HTMLCanvasElement | null>;
   readonly gameStatusRef: RefObject<HTMLParagraphElement | null>;
+  readonly fpsRef: RefObject<HTMLOutputElement | null>;
   readonly videoRef: RefObject<HTMLVideoElement | null>;
   readonly mode: "camera" | "keyboard";
   readonly visionSnapshot: CameraPanelSnapshot;
@@ -14,11 +15,13 @@ export interface GameCanvasProps {
   readonly onMute: () => void;
   readonly onRestart: () => void;
   readonly onDisableCamera: () => void;
+  readonly interactive: boolean;
 }
 
 export function GameCanvas({
   canvasRef,
   gameStatusRef,
+  fpsRef,
   videoRef,
   mode,
   visionSnapshot,
@@ -27,6 +30,7 @@ export function GameCanvas({
   onMute,
   onRestart,
   onDisableCamera,
+  interactive,
 }: GameCanvasProps) {
   return (
     <section className="game-stage" aria-label="Emotion Runner ゲーム画面">
@@ -49,15 +53,16 @@ export function GameCanvas({
       {mode === "camera" && (
         <CameraPanel videoRef={videoRef} snapshot={visionSnapshot} onDisableCamera={onDisableCamera} />
       )}
-      <div className="mode-indicator" aria-live="polite">
+      <div className="mode-indicator">
         {mode === "camera" ? "表情 + キーボード" : "キーボードモード"}
+        <output ref={fpsRef} className="game-fps" aria-live="off" aria-label="ゲーム描画FPS">ゲーム -- FPS</output>
       </div>
-      <TouchControls
+      {interactive && <TouchControls
         onAction={onAction}
         onPause={onPause}
         onMute={onMute}
         onRestart={onRestart}
-      />
+      />}
     </section>
   );
 }

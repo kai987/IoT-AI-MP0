@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("fake camera initializes the local Worker, MediaPipe, and ONNX pipeline", async ({ page }) => {
   test.setTimeout(60_000);
-  await page.goto("/");
+  await page.goto("./");
   await page.getByTestId("camera-mode").click();
 
   const canvas = page.getByTestId("game-canvas");

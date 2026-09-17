@@ -1,4 +1,6 @@
 import type { ChangeEvent } from "react";
+import { PERFORMANCE_PROFILES, type PerformanceProfile } from "../RuntimeSettings";
+import type { CameraDevice } from "../vision/types";
 
 export interface StartMenuProps {
   readonly volume: number;
@@ -9,6 +11,14 @@ export interface StartMenuProps {
   readonly onMuteToggle: () => void;
   readonly onCameraMode: () => void;
   readonly onKeyboardMode: () => void;
+  readonly performanceProfile: PerformanceProfile;
+  readonly onProfileChange: (value: PerformanceProfile) => void;
+  readonly cameras: readonly CameraDevice[];
+  readonly cameraDeviceId: string | null;
+  readonly onCameraChange: (value: string | null) => void;
+  readonly onRefreshCameras: () => void;
+  readonly onPractice: () => void;
+  readonly cameraMessage: string;
 }
 
 export function StartMenu({
@@ -20,9 +30,10 @@ export function StartMenu({
   onMuteToggle,
   onCameraMode,
   onKeyboardMode,
+  performanceProfile, onProfileChange, cameras, cameraDeviceId, onCameraChange, onRefreshCameras, onPractice, cameraMessage,
 }: StartMenuProps) {
   const secureCamera = window.isSecureContext && "mediaDevices" in navigator;
-  const webGpuAvailable = "gpu" in navigator;
+  const webGpuAvailable = Reflect.get(navigator, "gpu") != null;
 
   const updateVolume = (event: ChangeEvent<HTMLInputElement>) => {
     onVolumeChange(Number(event.currentTarget.value) / 100);
@@ -68,6 +79,25 @@ export function StartMenu({
       </div>
 
       <div className="menu-grid">
+        <section className="menu-section runtime-options" aria-labelledby="runtime-title">
+          <h2 id="runtime-title">カメラ・パフォーマンス</h2>
+          <label htmlFor="performance-profile">動作モード</label>
+          <select id="performance-profile" value={performanceProfile} onChange={(event) => onProfileChange(event.target.value as PerformanceProfile)}>
+            {Object.entries(PERFORMANCE_PROFILES).map(([key, value]) => <option key={key} value={key}>{value.label}・最大{value.targetFps} FPS</option>)}
+          </select>
+          <p>{PERFORMANCE_PROFILES[performanceProfile].width}×{PERFORMANCE_PROFILES[performanceProfile].height}（要求値）・AI 最大{PERFORMANCE_PROFILES[performanceProfile].maxAiFps} FPS</p>
+          <label htmlFor="camera-device">使用するカメラ</label>
+          <select id="camera-device" value={cameraDeviceId ?? ""} onChange={(event) => onCameraChange(event.target.value || null)}>
+            <option value="">ブラウザの既定カメラ</option>
+            {cameraDeviceId && !cameras.some((camera) => camera.deviceId === cameraDeviceId) && <option value={cameraDeviceId}>保存済みカメラ（未確認）</option>}
+            {cameras.filter((camera) => camera.deviceId).map((camera) => <option key={camera.deviceId} value={camera.deviceId}>{camera.label}</option>)}
+          </select>
+          <div className="practice-actions">
+            <button type="button" disabled={!secureCamera} onClick={onRefreshCameras}>カメラを許可して一覧更新</button>
+            <button type="button" disabled={!secureCamera || busy} onClick={onPractice}>表情を練習・調整</button>
+          </div>
+          <p role="status">{cameraMessage}</p>
+        </section>
         <section className="menu-section" aria-labelledby="controls-title">
           <h2 id="controls-title">操作</h2>
           <dl className="control-list">

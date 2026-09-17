@@ -47,6 +47,12 @@ jobs:
       - name: Verify and build the site
         run: npm run check
 
+      - name: Install test browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Test the Pages subpath before publishing
+        run: npm run test:e2e
+
       - name: Publish static site to gh-pages
         shell: bash
         working-directory: web/dist/client

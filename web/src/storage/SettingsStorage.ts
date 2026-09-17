@@ -1,6 +1,7 @@
 import { DEFAULT_GAME_SETTINGS } from "../game/Settings";
 import type { ControlMode } from "../game/types";
 import { browserStorage, type StorageAdapter } from "./StorageAdapter";
+import { DEFAULT_THRESHOLDS, PRACTICE_EMOTIONS, type EmotionThresholds, type PerformanceProfile } from "../RuntimeSettings";
 
 const SETTINGS_KEY = "emotion-runner.web.settings";
 
@@ -9,6 +10,8 @@ export interface UserSettings {
   readonly muted: boolean;
   readonly cameraDeviceId: string | null;
   readonly controlMode: ControlMode;
+  readonly performanceProfile: PerformanceProfile;
+  readonly emotionThresholds: EmotionThresholds;
 }
 
 interface StoredSettings extends UserSettings {
@@ -20,6 +23,8 @@ export const DEFAULT_USER_SETTINGS: UserSettings = Object.freeze({
   muted: false,
   cameraDeviceId: null,
   controlMode: "camera",
+  performanceProfile: "balanced",
+  emotionThresholds: DEFAULT_THRESHOLDS,
 });
 
 export class SettingsStorage {
@@ -85,6 +90,11 @@ function normalizeSettings(settings: UserSettings): UserSettings {
         ? settings.cameraDeviceId
         : null,
     controlMode: settings.controlMode === "keyboard" ? "keyboard" : "camera",
+    performanceProfile: settings.performanceProfile === "economy" || settings.performanceProfile === "performance" ? settings.performanceProfile : "balanced",
+    emotionThresholds: Object.fromEntries(PRACTICE_EMOTIONS.map((emotion) => {
+      const value = settings.emotionThresholds?.[emotion];
+      return [emotion, typeof value === "number" && Number.isFinite(value) ? Math.max(0.4, Math.min(0.85, value)) : DEFAULT_THRESHOLDS[emotion]];
+    })) as EmotionThresholds,
   };
 }
 

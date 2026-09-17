@@ -55,6 +55,10 @@ export class GameEngine {
   private actionTipText = "";
   private actionTipUntil = 0;
   private nowValue = 0;
+  private wallTimeValue = 0;
+  private pausedAt: number | null = null;
+  private pausedSeconds = 0;
+  private lastEmotionAt = Number.NEGATIVE_INFINITY;
   private nextEntityId = 1;
 
   public constructor(options: GameEngineOptions = {}) {
@@ -93,8 +97,14 @@ export class GameEngine {
     }
   }
 
-  public start(now = this.nowValue): void {
+  public start(now = this.wallTimeValue): void {
     this.nowValue = finiteTime(now);
+    this.wallTimeValue = this.nowValue;
+    this.pausedAt = null;
+    this.pausedSeconds = 0;
+    this.lastEmotionAt = Number.NEGATIVE_INFINITY;
+    this.latestEmotionSample = UNCERTAIN_EMOTION_SAMPLE;
+    this.events.length = 0;
     this.player.reset();
     this.controller.reset();
     this.obstaclesValue = [];
@@ -115,15 +125,19 @@ export class GameEngine {
     this.audio.play("start");
   }
 
-  public restart(now = this.nowValue): void {
+  public restart(now = this.wallTimeValue): void {
     this.start(now);
   }
 
-  public togglePause(): GameState {
+  public togglePause(now = this.wallTimeValue): GameState {
     if (this.stateValue === GameState.Playing) {
+      this.pausedAt = Math.max(this.wallTimeValue, finiteTime(now));
       this.stateValue = GameState.Paused;
       this.audio.setPaused(true);
     } else if (this.stateValue === GameState.Paused) {
+      this.pausedSeconds += Math.max(0, finiteTime(now) - (this.pausedAt ?? now));
+      this.pausedAt = null;
+      this.invalidateEmotion();
       this.stateValue = GameState.Playing;
       this.audio.setPaused(false);
     }
@@ -142,32 +156,44 @@ export class GameEngine {
 
   public updateEmotion(
     sample: EmotionSample,
-    now = this.nowValue,
+    now = this.wallTimeValue,
   ): ActionDecision | null {
     this.latestEmotionSample = sample;
+    this.lastEmotionAt = finiteTime(now);
     if (this.stateValue !== GameState.Playing || this.modeValue !== "camera") {
       return null;
     }
-    const timestamp = finiteTime(now);
+    const timestamp = this.gameTime(now);
     this.nowValue = Math.max(this.nowValue, timestamp);
     const decision = this.controller.update(sample, timestamp);
     this.advanceFaceAction(timestamp);
     return decision;
   }
 
-  public setEmotionSample(sample: EmotionSample, now = this.nowValue): ActionDecision | null {
+  public setEmotionSample(sample: EmotionSample, now = this.wallTimeValue): ActionDecision | null {
     return this.updateEmotion(sample, now);
+  }
+
+  public invalidateEmotion(): void {
+    this.latestEmotionSample = UNCERTAIN_EMOTION_SAMPLE;
+    this.lastEmotionAt = Number.NEGATIVE_INFINITY;
+    this.controller.invalidate();
+  }
+
+  /** 一時停止を除いた時間 / 所有技能使用扣除暂停时长的游戏时间。 */
+  private gameTime(wallNow: number): number {
+    return (this.pausedAt ?? finiteTime(wallNow)) - this.pausedSeconds;
   }
 
   public requestAction(
     action: GameAction,
     source: ActionSource = "keyboard",
-    now = this.nowValue,
+    now = this.wallTimeValue,
   ): ActionDecision | null {
     if (this.stateValue !== GameState.Playing) {
       return null;
     }
-    const timestamp = finiteTime(now);
+    const timestamp = this.gameTime(now);
     this.nowValue = Math.max(this.nowValue, timestamp);
     if (source === "face") {
       const decision = this.updateEmotion(
@@ -177,7 +203,7 @@ export class GameEngine {
           features: null,
           uncertain: false,
         },
-        timestamp,
+        now,
       );
       return decision;
     }
@@ -188,7 +214,8 @@ export class GameEngine {
   }
 
   public update(deltaSeconds: number, now: number): void {
-    const timestamp = finiteTime(now);
+    this.wallTimeValue = finiteTime(now);
+    const timestamp = this.gameTime(now);
     this.nowValue = Math.max(this.nowValue, timestamp);
     if (this.stateValue !== GameState.Playing) {
       return;
@@ -201,7 +228,11 @@ export class GameEngine {
     this.elapsedValue += delta;
 
     if (this.modeValue === "camera") {
-      this.controller.update(this.latestEmotionSample, timestamp);
+      if (now - this.lastEmotionAt > this.settings.recognition.sampleMaxAgeSeconds) {
+        this.invalidateEmotion();
+      } else {
+        this.controller.update(this.latestEmotionSample, timestamp);
+      }
       this.advanceFaceAction(timestamp);
     }
 
@@ -253,10 +284,11 @@ export class GameEngine {
     }
   }
 
-  public getSnapshot(now = this.nowValue): GameSnapshot {
-    const timestamp = finiteTime(now);
+  public getSnapshot(now = this.wallTimeValue): GameSnapshot {
+    const timestamp = this.gameTime(now);
     return {
       state: this.stateValue,
+      gameTime: timestamp,
       mode: this.modeValue,
       player: this.player.getSnapshot(timestamp),
       obstacles: this.obstaclesValue.map((obstacle) => obstacle.getSnapshot()),

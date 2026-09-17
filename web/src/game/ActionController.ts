@@ -117,6 +117,13 @@ export class ActionController {
     return this.heldActionValue;
   }
 
+  /** 入力失効、冷却は維持 / 输入失效时清除持续动作，但保留键盘冷却。 */
+  public invalidate(): void {
+    this.clearHeldAction();
+    this.uncertainSinceValue = null;
+    this.statusMessageValue = "判定不能：新しい表情を待っています";
+  }
+
   public get heldEmotion(): EmotionName | null {
     return this.heldEmotionValue;
   }

@@ -214,8 +214,17 @@ async function main() {
     .map((path) => path.split(sep).join("/"))
     .filter(Boolean);
   const discoveredModelBinaries = [];
+  const runtimeHashes = new Map();
+  let totalClientBytes = 0;
   for (const path of distFiles) {
     const fileInfo = await stat(path);
+    if (path.startsWith(`${clientRoot}${sep}`)) totalClientBytes += fileInfo.size;
+    // 重複と総容量を監視 / 防止运行时二进制重复发布及总包体回退。
+    if (path.endsWith(".wasm")) {
+      const hash = await sha256(path);
+      if (runtimeHashes.has(hash)) fail(`duplicate WASM binaries: ${runtimeHashes.get(hash)} and ${path.slice(distRoot.length + 1)}`);
+      runtimeHashes.set(hash, path.slice(distRoot.length + 1));
+    }
     if (fileInfo.size > sitesFileSizeLimit) {
       fail(`file exceeds the Sites single-file size limit: ${path.slice(distRoot.length + 1)}`);
     }
@@ -245,6 +254,13 @@ async function main() {
       if (text.includes(fragment)) {
         fail(`an absolute source path appears in ${path.slice(distRoot.length + 1)}`);
       }
+    }
+  }
+
+  if (totalClientBytes > 100 * 1024 * 1024) fail(`client build exceeds 100 MiB budget: ${totalClientBytes} bytes`);
+  for (const name of ["ort-wasm-simd-threaded", "ort-wasm-simd-threaded.asyncify"]) {
+    for (const extension of ["mjs", "wasm"]) {
+      if (!seenPaths.has(`ort/${name}.${extension}`)) fail(`missing runtime pair: ${name}.${extension}`);
     }
   }
 

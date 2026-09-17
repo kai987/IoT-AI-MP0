@@ -7,18 +7,21 @@ test("production build serves local models and runtimes without 404 responses", 
       failed.push(response.url());
     }
   });
-  await page.goto("/");
+  await page.goto("./");
   await expect(page).toHaveTitle("Emotion Runner");
   const required = [
     "/generated/models/enet_b0_8_best_vgaf.onnx",
     "/generated/models/face_landmarker.task",
     "/generated/ort/asset-manifest.json",
-    "/generated/ort/ort-wasm-simd-threaded.jsep.wasm.gzip",
+    "/generated/ort/ort-wasm-simd-threaded.mjs",
+    "/generated/ort/ort-wasm-simd-threaded.wasm",
+    "/generated/ort/ort-wasm-simd-threaded.asyncify.mjs",
+    "/generated/ort/ort-wasm-simd-threaded.asyncify.wasm",
     "/generated/mediapipe/vision_wasm_module_internal.js",
     "/generated/mediapipe/vision_wasm_module_internal.wasm",
   ];
   for (const path of required) {
-    const response = await request.get(path, { headers: { Range: "bytes=0-31" } });
+    const response = await request.get(path.slice(1), { headers: { Range: "bytes=0-31" } });
     expect([200, 206]).toContain(response.status());
   }
   expect(failed).toEqual([]);

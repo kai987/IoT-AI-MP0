@@ -8,6 +8,7 @@ import {
 import { validateEightClassScores } from "./preprocessing";
 
 export interface EmotionSmootherOptions {
+  readonly emotionThresholds?: Partial<Record<EmotionLabel, number>>;
   readonly alpha?: number;
   readonly confidenceThreshold?: number;
   readonly marginThreshold?: number;
@@ -33,8 +34,10 @@ export class EmotionSmoother {
   private stableIndex: number | null = null;
   private candidateIndex: number | null = null;
   private candidateCount = 0;
+  private readonly emotionThresholds: Partial<Record<EmotionLabel, number>>;
 
   public constructor(options: EmotionSmootherOptions = {}) {
+    this.emotionThresholds = { ...options.emotionThresholds };
     this.alpha = clamp(options.alpha ?? DEFAULT_OPTIONS.alpha, 0, 1);
     this.confidenceThreshold = clamp(
       options.confidenceThreshold ?? DEFAULT_OPTIONS.confidenceThreshold,
@@ -95,8 +98,10 @@ export class EmotionSmoother {
       throw new Error("Emotion ranking requires eight classes");
     }
     const margin = top.value - second.value;
+    const label = EMOTION_LABELS[top.index];
+    const threshold = label === undefined ? this.confidenceThreshold : (this.emotionThresholds[label] ?? this.confidenceThreshold);
     const reliable =
-      top.value >= this.confidenceThreshold && margin >= this.marginThreshold;
+      top.value >= threshold && margin >= this.marginThreshold;
 
     if (!reliable) {
       this.stableIndex = null;
@@ -107,7 +112,7 @@ export class EmotionSmoother {
         top.index,
         top.value,
         margin,
-        top.value < this.confidenceThreshold ? "low-confidence" : "low-margin",
+        top.value < threshold ? "low-confidence" : "low-margin",
       );
     }
 

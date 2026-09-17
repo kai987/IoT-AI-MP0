@@ -111,6 +111,7 @@ describe("GameEngine", () => {
     let now = 0;
     for (let frame = 0; frame < 120; frame += 1) {
       now += 1 / 60;
+      engine.updateEmotion(emotion("happiness"), now);
       engine.update(1 / 60, now);
     }
 
@@ -133,6 +134,7 @@ describe("GameEngine", () => {
     let now = 0.1;
     for (let frame = 0; frame < 120; frame += 1) {
       now += 1 / 60;
+      engine.updateEmotion(emotion("surprise"), now);
       engine.update(1 / 60, now);
       if (engine.getSnapshot(now).player.faceAction === GameAction.Boost) {
         break;
@@ -170,6 +172,36 @@ describe("GameEngine", () => {
 
     expect(engine.getSnapshot(0.01).lives).toBe(5);
     expect(engine.drainEvents().some((event) => event.type === "shield-block")).toBe(true);
+  });
+
+  it("expires an old emotion without interrupting the current jump", () => {
+    const { engine } = createEngine();
+    engine.start(0);
+    engine.updateEmotion(emotion("happiness"), 0);
+    for (let frame = 1; frame <= 600; frame++) engine.update(1 / 60, frame / 60);
+    expect(engine.getSnapshot(10).controller.heldAction).toBeNull();
+    expect(engine.getSnapshot(10).player.onGround).toBe(true);
+    expect(engine.drainEvents().filter((event) => event.type === "action")).toHaveLength(1);
+  });
+
+  it("freezes shield, invulnerability and cooldown during pause", () => {
+    const { engine } = createEngine();
+    engine.start(0);
+    engine.requestAction(GameAction.Shield, "keyboard", 0);
+    engine.player.takeDamage(0);
+    engine.update(0.1, 0.1);
+    const before = engine.getSnapshot(0.1);
+    engine.togglePause(0.1);
+    engine.update(0, 10.1);
+    const paused = engine.getSnapshot(10.1);
+    expect(paused.player.shielded).toBe(true);
+    expect(paused.player.invulnerable).toBe(true);
+    expect(paused.cooldowns).toEqual(before.cooldowns);
+    expect(paused.elapsed).toBe(before.elapsed);
+    engine.togglePause(10.1);
+    engine.update(0.1, 10.2);
+    expect(engine.getSnapshot(10.2).cooldowns.shield).toBeCloseTo(4.8);
+    expect(engine.getSnapshot(10.2).player.shielded).toBe(true);
   });
 
   it("destroys a crate in the attack rectangle and awards its score", () => {

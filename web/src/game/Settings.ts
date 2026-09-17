@@ -24,6 +24,7 @@ export interface GameSettings {
     readonly hudHeight: number;
     readonly hudTimeCenterXOffset: number;
     readonly hudTimeCenterYOffset: number;
+    readonly hudControlsYOffset: number;
     readonly actionTipCenterX: number;
     readonly actionTipCenterY: number;
     readonly actionTipWidth: number;
@@ -68,6 +69,7 @@ export interface GameSettings {
   readonly recognition: {
     readonly actionConfidenceThreshold: number;
     readonly strongClassifierConfidence: number;
+    readonly sampleMaxAgeSeconds: number;
     readonly surpriseMouthRatioThreshold: number;
     readonly surpriseJawOpenThreshold: number;
     readonly surpriseEyeWideThreshold: number;
@@ -161,7 +163,10 @@ export const DEFAULT_GAME_SETTINGS = {
     hudWidth: 700,
     hudHeight: 102,
     hudTimeCenterXOffset: 580,
-    hudTimeCenterYOffset: 25,
+    // 時間表示の上端。ハートの上に余白を確保 / 时长文字顶部，与爱心上方保持间距。
+    hudTimeCenterYOffset: 10,
+    // 操作案内の上端。ハートの下に余白を確保 / 操作提示顶部，与爱心下方保持间距。
+    hudControlsYOffset: 76,
     actionTipCenterX: 640,
     actionTipCenterY: 170,
     actionTipWidth: 420,
@@ -214,6 +219,8 @@ export const DEFAULT_GAME_SETTINGS = {
   recognition: {
     actionConfidenceThreshold: 0.4,
     strongClassifierConfidence: 0.7,
+    // 表情入力の有効期限 / 表情结果超过此秒数后不再触发下一次动作。
+    sampleMaxAgeSeconds: 0.5,
     surpriseMouthRatioThreshold: 0.8,
     surpriseJawOpenThreshold: 0.12,
     surpriseEyeWideThreshold: 0.12,

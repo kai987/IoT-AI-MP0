@@ -28,6 +28,7 @@ export class GameRenderer {
     canvas: HTMLCanvasElement,
     settings: GameSettings = DEFAULT_GAME_SETTINGS,
     liveRegion: HTMLParagraphElement | null = null,
+    private readonly maxPixelRatio = 2,
   ) {
     const context = canvas.getContext("2d", { alpha: false });
     if (context === null) {
@@ -45,6 +46,7 @@ export class GameRenderer {
   }
 
   public draw(snapshot: GameSnapshot, now: number): void {
+    now = snapshot.gameTime;
     if (this.disposed) {
       return;
     }
@@ -129,7 +131,7 @@ export class GameRenderer {
   }
 
   private pixelRatio(): number {
-    return Math.min(3, Math.max(1, globalThis.devicePixelRatio || 1));
+    return Math.min(this.maxPixelRatio, Math.max(1, globalThis.devicePixelRatio || 1));
   }
 
   private drawSky(): void {
@@ -360,7 +362,7 @@ export class GameRenderer {
         index < snapshot.lives ? this.settings.colors.red : this.settings.colors.panelLight,
       );
     }
-    text(context, "P 一時停止  M ミュート", layout.hudX + 482, layout.hudY + 68, 17, this.settings.colors.muted);
+    text(context, "P 一時停止  M ミュート", layout.hudX + 482, layout.hudY + layout.hudControlsYOffset, 17, this.settings.colors.muted);
   }
 
   private drawSkillBar(snapshot: GameSnapshot, now: number): void {

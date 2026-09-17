@@ -20,6 +20,10 @@ export interface CameraPanelSnapshot {
   readonly primaryBox: NormalizedBox | null;
   readonly cameraWidth: number;
   readonly cameraHeight: number;
+  readonly cameraFps?: number;
+  readonly analysisWidth?: number;
+  readonly analysisHeight?: number;
+  readonly startupSeconds?: number;
 }
 
 export interface CameraPanelProps {
@@ -71,7 +75,7 @@ export function CameraPanel({ videoRef, snapshot, onDisableCamera }: CameraPanel
         <span><i className="live-dot" aria-hidden="true" />カメラ：オン（ミラー）</span>
         <button type="button" onClick={onDisableCamera} aria-label="カメラを停止">停止</button>
       </div>
-      <div className="video-frame">
+      <div className="video-frame" style={{ aspectRatio: `${snapshot.cameraWidth || 16} / ${snapshot.cameraHeight || 9}` }}>
         <video ref={videoRef} autoPlay muted playsInline aria-label="鏡像カメラプレビュー" />
         {boxStyle !== undefined && <span className="face-box" style={boxStyle} aria-hidden="true" />}
         {snapshot.status !== "running" && <span className="video-status">{snapshot.status}</span>}
@@ -81,8 +85,11 @@ export function CameraPanel({ videoRef, snapshot, onDisableCamera }: CameraPanel
         <div><dt>信頼度</dt><dd>{Math.round(snapshot.confidence * 100)}%</dd></div>
         <div><dt>候補</dt><dd>{candidate}</dd></div>
         <div><dt>AI FPS</dt><dd>{snapshot.aiFps.toFixed(1)}・顔 {snapshot.faceCount}</dd></div>
+        <div><dt>カメラ FPS</dt><dd>{snapshot.cameraFps?.toFixed(1) ?? "--"}</dd></div>
         <div><dt>Backend</dt><dd>{backend}</dd></div>
         <div><dt>入力</dt><dd>{snapshot.cameraWidth || "--"} × {snapshot.cameraHeight || "--"}</dd></div>
+        <div><dt>解析入力</dt><dd>{snapshot.analysisWidth || "--"} × {snapshot.analysisHeight || "--"}</dd></div>
+        <div><dt>AI準備</dt><dd>{snapshot.startupSeconds === undefined ? "--" : `${snapshot.startupSeconds.toFixed(1)} 秒`}</dd></div>
       </dl>
     </aside>
   );

@@ -24,7 +24,7 @@ test("keyboard mode starts without requesting the camera and runs every control"
     }
   });
 
-  await page.goto("/");
+  await page.goto("./");
   await expect(page.getByRole("heading", { name: "Emotion Runner" })).toBeVisible();
   expect(await page.evaluate(() => {
     const value: unknown = Reflect.get(globalThis, "__cameraRequestCount");
@@ -57,7 +57,7 @@ test("keyboard mode starts without requesting the camera and runs every control"
 });
 
 test("high score survives a reload", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("./");
   await page.evaluate(() => {
     localStorage.setItem("emotion-runner.web.high-score", JSON.stringify({ version: 1, highScore: 4321 }));
   });

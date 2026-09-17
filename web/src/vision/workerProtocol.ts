@@ -1,5 +1,6 @@
 import {
   type FacialFeatures,
+  type EmotionLabel,
   type FaceBox,
   type QualityIssue,
   type UncertaintyReason,
@@ -39,6 +40,7 @@ export interface WorkerResetRequest {
 }
 
 export interface WorkerInferenceOptions {
+  readonly emotionThresholds?: Partial<Record<EmotionLabel, number>>;
   readonly smoothingAlpha?: number;
   readonly confidenceThreshold?: number;
   readonly marginThreshold?: number;
@@ -237,6 +239,9 @@ function isWorkerInferenceOptions(value: unknown): value is WorkerInferenceOptio
     "marginThreshold",
     "highConfidenceSwitch",
   ] as const;
+  if (value.emotionThresholds !== undefined && (!isRecord(value.emotionThresholds) || Object.entries(value.emotionThresholds).some(([key, entry]) => !isEmotionLabel(key) || !isFiniteNumber(entry) || entry < 0.4 || entry > 0.85))) {
+    return false;
+  }
   for (const key of probabilityKeys) {
     const entry = value[key];
     if (

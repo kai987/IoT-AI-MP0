@@ -1,4 +1,4 @@
-import { loadEnv } from "vite";
+import { defaultClientConditions, loadEnv } from "vite";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import { sites } from "@openai/sites-vite-plugin";
@@ -11,6 +11,8 @@ export default defineConfig(({ mode }) => {
   return {
     base,
     plugins: [react(), sites()],
+    // WASMはgeneratedに一元化 / WASM统一从generated目录加载，避免重复打包。
+    resolve: { conditions: ["onnxruntime-web-use-extern-wasm", ...defaultClientConditions] },
     optimizeDeps: {
       include: ["@mediapipe/tasks-vision", "onnxruntime-web/webgpu"],
     },

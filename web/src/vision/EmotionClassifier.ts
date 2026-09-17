@@ -64,35 +64,6 @@ async function loadOrtRuntime(webGpu: boolean): Promise<OrtRuntimeLike> {
   return module as unknown as OrtRuntimeLike;
 }
 
-function canDecompressGzip(): boolean {
-  return typeof DecompressionStream !== "undefined";
-}
-
-async function prepareWebGpuWasmPaths(
-  ort: OrtRuntimeLike,
-  wasmRoot: string,
-): Promise<void> {
-  const compressedWasmUrl = new URL(
-    "ort-wasm-simd-threaded.jsep.wasm.gzip",
-    wasmRoot,
-  ).href;
-  const response = await fetch(compressedWasmUrl);
-  if (!response.ok || response.body === null) {
-    throw new Error(
-      `Compressed ONNX Runtime WebGPU binary could not be loaded (${response.status})`,
-    );
-  }
-  const stream = response.body.pipeThrough(new DecompressionStream("gzip"));
-  const wasmBuffer = await new Response(stream).arrayBuffer();
-  const wasmUrl = URL.createObjectURL(
-    new Blob([wasmBuffer], { type: "application/wasm" }),
-  );
-  ort.env.wasm.wasmPaths = {
-    mjs: new URL("ort-wasm-simd-threaded.jsep.mjs", wasmRoot).href,
-    wasm: wasmUrl,
-  };
-}
-
 function currentLocationHref(): string {
   if (typeof location !== "undefined" && location.href.length > 0) {
     return location.href;
@@ -113,7 +84,7 @@ export function resolveLocalAssetUrl(
 }
 
 function browserHasWebGpu(): boolean {
-  return typeof navigator !== "undefined" && Reflect.has(navigator, "gpu");
+  return typeof navigator !== "undefined" && Reflect.get(navigator, "gpu") != null;
 }
 
 function validateSessionContract(session: OrtSessionLike): void {
@@ -158,7 +129,8 @@ function toNumericScores(value: unknown): readonly number[] {
 export class EmotionClassifier {
   public provider: VisionExecutionProvider;
   public fallbackReason: string | null;
-  private readonly ort: OrtRuntimeLike;
+  private ort: OrtRuntimeLike;
+  private readonly loadWasm: () => Promise<OrtRuntimeLike>;
   private readonly modelUrl: string;
   private session: OrtSessionLike;
   private fallbackPromise: Promise<void> | null = null;
@@ -170,12 +142,14 @@ export class EmotionClassifier {
     provider: VisionExecutionProvider,
     fallbackReason: string | null,
     modelUrl: string,
+    loadWasm: () => Promise<OrtRuntimeLike>,
   ) {
     this.ort = ort;
     this.session = session;
     this.provider = provider;
     this.fallbackReason = fallbackReason;
     this.modelUrl = modelUrl;
+    this.loadWasm = loadWasm;
   }
 
   public static async create(
@@ -188,29 +162,20 @@ export class EmotionClassifier {
       ? wasmRoot
       : `${wasmRoot}/`;
     const requestedWebGpu = options.webGpuAvailable ?? browserHasWebGpu();
-    const bundledRuntime = options.ort === undefined;
-    const mayUseWebGpu =
-      requestedWebGpu && (!bundledRuntime || canDecompressGzip());
-    const ort = options.ort ?? (await loadOrtRuntime(mayUseWebGpu));
-    if (bundledRuntime && mayUseWebGpu) {
-      await prepareWebGpuWasmPaths(ort, normalizedWasmRoot);
-    } else {
+    const loadRuntime = async (gpu: boolean): Promise<OrtRuntimeLike> => {
+      const ort = options.ort ?? (await loadOrtRuntime(gpu));
       ort.env.wasm.wasmPaths = normalizedWasmRoot;
-    }
-    const hardwareConcurrency =
-      typeof navigator === "undefined" ? 1 : navigator.hardwareConcurrency || 1;
-    ort.env.wasm.numThreads =
-      typeof crossOriginIsolated !== "undefined" && crossOriginIsolated
-        ? Math.min(4, hardwareConcurrency)
-        : 1;
-    ort.env.wasm.proxy = false;
-
-    let fallbackReason: string | null =
-      requestedWebGpu && !mayUseWebGpu
-        ? "WebGPU runtime compression is unsupported; using WASM"
-        : null;
-    if (mayUseWebGpu) {
+      const threads = typeof navigator === "undefined" ? 1 : navigator.hardwareConcurrency || 1;
+      ort.env.wasm.numThreads = globalThis.crossOriginIsolated ? Math.min(4, threads) : 1;
+      ort.env.wasm.proxy = false;
+      return ort;
+    };
+    const loadWasm = () => loadRuntime(false);
+    let fallbackReason: string | null = null;
+    // GPU読込全体を保護 / GPU模块、二进制下载及会话初始化均允许降级。
+    if (requestedWebGpu) {
       try {
+        const ort = await loadRuntime(true);
         const webGpuSession = await ort.InferenceSession.create(modelUrl, {
           executionProviders: ["webgpu"],
           graphOptimizationLevel: "all",
@@ -222,6 +187,7 @@ export class EmotionClassifier {
           "webgpu",
           null,
           modelUrl,
+          loadWasm,
         );
       } catch (error) {
         fallbackReason =
@@ -229,6 +195,7 @@ export class EmotionClassifier {
       }
     }
 
+    const ort = await loadWasm();
     const wasmSession = await ort.InferenceSession.create(modelUrl, {
       executionProviders: ["wasm"],
       graphOptimizationLevel: "all",
@@ -240,6 +207,7 @@ export class EmotionClassifier {
       "wasm",
       fallbackReason,
       modelUrl,
+      loadWasm,
     );
   }
 
@@ -291,12 +259,14 @@ export class EmotionClassifier {
     }
     const failedSession = this.session;
     this.fallbackPromise = (async (): Promise<void> => {
-      const wasmSession = await this.ort.InferenceSession.create(this.modelUrl, {
+      const wasmRuntime = await this.loadWasm();
+      const wasmSession = await wasmRuntime.InferenceSession.create(this.modelUrl, {
         executionProviders: ["wasm"],
         graphOptimizationLevel: "all",
       });
       validateSessionContract(wasmSession);
       this.session = wasmSession;
+      this.ort = wasmRuntime;
       this.provider = "wasm";
       this.fallbackReason = `WebGPU inference failed: ${
         error instanceof Error ? error.message : String(error)

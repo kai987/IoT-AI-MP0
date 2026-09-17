@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
 test("real ONNX model returns stable finite eight-class WASM output", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("./");
   // Use the public package export that matches the production WebGPU/WASM
   // bundle. Reaching into dist/ is blocked by modern package exports and can
   // silently diverge from the runtime files copied by prepare-assets.mjs.

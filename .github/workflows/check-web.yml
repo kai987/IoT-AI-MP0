@@ -1,0 +1,33 @@
+name: Check Emotion Runner Web
+on:
+  pull_request:
+    paths: ["web/**", "models/**", ".github/workflows/*web.yml"]
+  push:
+    branches: ["codex/web-site-publish"]
+    paths: ["web/**", "models/**", ".github/workflows/*web.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser-check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        base: ["/", "/IoT-AI-MP0/"]
+    env:
+      VITE_BASE_PATH: ${{ matrix.base }}
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e

@@ -50,6 +50,7 @@ button {
 
 button:focus-visible,
 input:focus-visible,
+select:focus-visible,
 canvas:focus-visible {
   outline: 3px solid #fff;
   outline-offset: 3px;
@@ -223,6 +224,28 @@ button:disabled {
   display: grid;
   grid-template-columns: 1.25fr 1fr;
   gap: 16px;
+}
+
+.runtime-options { grid-column: 1 / -1; }
+.runtime-options label { display: block; margin: 12px 0 7px; }
+.runtime-options select { width: 100%; padding: 10px 12px; border: 1px solid #526a89; border-radius: 8px; background: #111f35; color: #f5f8ff; font: inherit; }
+.runtime-options p, .practice-disclaimer { color: var(--muted); font-size: 0.85rem; line-height: 1.6; }
+.practice-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.practice-actions button, .calibration-row button { padding: 9px 13px; border: 1px solid #526a89; border-radius: 8px; background: #172943; color: #f5f8ff; font: inherit; cursor: pointer; }
+.practice-actions .primary-button { background: var(--cyan); color: #07131f; }
+.game-fps { display: block; font-size: 0.75rem; margin-top: 4px; }
+.calibration-panel { position: absolute; z-index: 5; top: 75px; left: 4%; width: min(58%, 700px); max-height: calc(100vh - 100px); overflow: auto; padding: 22px; border: 1px solid #46627f; border-radius: 18px; background: #0c182beb; }
+.calibration-panel h2 { margin: 0 0 12px; font-size: 1.3rem; }
+.calibration-panel p { font-size: 0.85rem; line-height: 1.6; }
+.calibration-row { display: grid; grid-template-columns: 100px 1fr 135px; gap: 12px; align-items: center; margin: 12px 0; }
+.calibration-row label { font-size: 0.88rem; }
+.calibration-row input { width: 100%; accent-color: var(--cyan); }
+.calibration-row button { font-size: 0.8rem; }
+.practice-report { padding: 14px; border-radius: 10px; background: #152840; }
+@media (max-width: 760px) {
+  .calibration-panel { position: relative; top: auto; left: auto; width: 100%; max-height: none; margin-top: 16px; }
+  .calibration-row { grid-template-columns: 85px 1fr; }
+  .calibration-row button { grid-column: 2; }
 }
 
 .menu-section,
@@ -473,7 +496,7 @@ button:disabled {
 
 .camera-panel {
   position: absolute;
-  top: 18.5%;
+  top: 3%;
   right: 1.5%;
   width: 24%;
   overflow: hidden;
@@ -582,8 +605,8 @@ button:disabled {
 
 .mode-indicator {
   position: absolute;
-  right: 1.5%;
-  bottom: 14.5%;
+  right: 27%;
+  top: 3%;
   padding: 6px 10px;
   border: 1px solid #415774;
   border-radius: 7px;
@@ -698,6 +721,9 @@ button:disabled {
     top: 17%;
     width: 29%;
   }
+
+  .mode-indicator { top: auto; bottom: 14%; right: auto; left: 2%; padding: 3px 6px; font-size: 0.5rem; }
+  .mode-indicator .game-fps { font-size: 0.5rem; }
 
   .vision-stats div:nth-child(n + 4) {
     display: none;

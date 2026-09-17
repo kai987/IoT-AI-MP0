@@ -103,6 +103,7 @@ function replaceSmoother(options: WorkerInferenceOptions): void {
     marginThreshold: options.marginThreshold,
     switchConfirmations: options.switchConfirmations,
     highConfidenceSwitch: options.highConfidenceSwitch,
+    emotionThresholds: options.emotionThresholds,
   });
   smoothedFeatures = null;
 }
@@ -127,34 +128,36 @@ async function initialize(assets: VisionAssetUrls): Promise<void> {
     message: "AIモデルを読み込んでいます…",
   });
 
-  const nextClassifier = await EmotionClassifier.create({
-    modelUrl: assets.emotionModelUrl,
-    ortWasmRoot: assets.ortWasmRoot,
-  });
-  try {
-    post({
-      type: "INITIALIZING",
-      stage: "models",
-      message: "顔ランドマークモデルを読み込んでいます…",
-    });
-    const nextLandmarker = await FaceLandmarkerRuntime.create({
+  const startedAt = performance.now();
+  const timed = async <T>(label: string, task: Promise<T>): Promise<T> => {
+    const value = await task;
+    post({ type: "INITIALIZING", stage: "models", message: `${label} 準備完了 (${((performance.now() - startedAt) / 1000).toFixed(1)}秒)・残りを準備中…` });
+    return value;
+  };
+  // 独立したモデルを並列準備、片方失敗時も解放 / 并行初始化独立模型，失败时释放已成功的另一项。
+  const [classification, detection] = await Promise.allSettled([
+    timed("表情モデル", EmotionClassifier.create({ modelUrl: assets.emotionModelUrl, ortWasmRoot: assets.ortWasmRoot })),
+    timed("顔モデル", FaceLandmarkerRuntime.create({
       modelUrl: assets.faceLandmarkerModelUrl,
       wasmRoot: assets.mediaPipeWasmRoot,
-    });
-    classifier = nextClassifier;
-    landmarker = nextLandmarker;
-    if (nextClassifier.fallbackReason !== null) {
-      post({
-        type: "WARNING",
-        code: "webgpu-fallback",
-        message: `WebGPUを使用できないためWASMに切り替えました: ${nextClassifier.fallbackReason}`,
-      });
-    }
-    post({ type: "READY", provider: nextClassifier.provider });
-  } catch (error) {
-    await nextClassifier.close();
-    throw error;
+    })),
+  ]);
+  if (stopping || classification.status === "rejected" || detection.status === "rejected") {
+    if (classification.status === "fulfilled") await classification.value.close();
+    if (detection.status === "fulfilled") detection.value.close();
+    if (stopping) return;
+    throw classification.status === "rejected" ? classification.reason : detection.status === "rejected" ? detection.reason : new Error("AI初期化失敗");
   }
+  classifier = classification.value;
+  landmarker = detection.value;
+  if (classifier.fallbackReason !== null) {
+    post({
+      type: "WARNING",
+      code: "webgpu-fallback",
+      message: `WebGPUを使用できないためWASMに切り替えました: ${classifier.fallbackReason}`,
+    });
+  }
+  post({ type: "READY", provider: classifier.provider });
 }
 
 async function processFrame(

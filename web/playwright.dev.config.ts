@@ -1,6 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 export default defineConfig({
+  outputDir: join(tmpdir(), "emotion-runner-e2e", "development"),
   testDir: "./tests/e2e",
   testMatch: "camera-pipeline.spec.ts",
   timeout: 60_000,

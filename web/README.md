@@ -191,7 +191,7 @@ npm run build
 npm run preview
 ```
 
-`npm run build` は `web/dist/` を生成し、その後 `check:production` を実行します。`preview` は既存の `dist/` を配信するため、必ず先にbuildしてください。
+`npm run build` は静的ファイルを `web/dist/client/`、Sites Workerを `web/dist/server/` に生成し、その後 `check:production` を実行します。`preview` は既存の `dist/client/` を配信するため、必ず先にbuildしてください。Sitesには `dist/` 全体、GitHub Pagesには `dist/client/` だけを配布します。
 
 特定のサブパス向けにビルドする場合：
 
@@ -209,11 +209,38 @@ Pages用ビルドをローカル確認するときは、previewにも同じ`VITE
 1. GitHubのリポジトリで `Settings > Pages` を開きます。
 2. `Build and deployment > Source` に `GitHub Actions` を選択します。
 3. Web関連の変更を `main` にpushするか、Actionsからworkflowを手動実行します。
-4. workflowはNode.js 24、`npm ci`、`npm run check`、`web/dist` のアップロード/デプロイを実行します。
+4. workflowはNode.js 24、`npm ci`、`npm run check`、`web/dist/client` のアップロード/デプロイを実行します。
 
 現在のworkflowは `VITE_BASE_PATH=/IoT-AI-MP0/` を使用します。リポジトリ名を変えた場合はworkflowのパスも同時に更新してください。GitHub PagesはHTTPSで配信されるためカメラの安全なコンテキスト要件を満たします。
 
-> 中文：工作流在 `main` 分支的 Web 相关文件更新时，使用 Node 24 执行 `npm ci` 和 `npm run check`，然后将 `web/dist` 发布到 GitHub Pages。请在 Pages 设置中选择 GitHub Actions。
+> 中文：工作流在 `main` 分支的 Web 相关文件更新时，使用 Node 24 执行 `npm ci` 和 `npm run check`，然后将 `web/dist/client` 发布到 GitHub Pages。请在 Pages 设置中选择 GitHub Actions。
+
+## 性能・カメラ・感度調整 / 性能、摄像头与灵敏度
+
+メニューでカメラと性能モードを選択できます。カメラ一覧の許可ボタンは一覧取得後すぐに映像トラックを停止します。保存済みのカメラが利用できない場合は、エラー画面からメニューへ戻り、既定または別のカメラを選択してください。
+
+| モード / 模式 | 描画上限 / 渲染上限 | 撮影要求 / 摄像头请求 | 解析幅上限 / 分析宽度上限 | AI FPS（初期→上限） |
+| --- | ---: | --- | ---: | --- |
+| 省電力 / 省电 | 30 | 640×360 / 30 FPS | 480 | 8→10 |
+| バランス / 均衡（既定） | 60 | 1280×720 / 30 FPS | 640 | 12→15 |
+| 高性能 / 高性能 | 120 | 1920×1080 / 30 FPS | 960 | 20→20 |
+
+上限は達成保証ではありません。実際の撮影解像度・撮影FPS・解析入力・AI FPSはカメラ欄、描画FPSはゲーム欄に表示します。プレビューは撮影解像度のまま、AI転送画像だけ縮小します。表情分類モデルの入力は従来どおり224×224です。`src/RuntimeSettings.ts` に日中併記の設定説明があります。`Settings.ts` の120 FPSは高性能モード、解析間隔2はバランスモードに反映されます。
+
+「表情を練習・調整」では5種類の表情ごとに確信度しきい値（40〜85%）を調整できます。「測定」で3秒間の一致・判定不能・別表情の件数と初回一致までの時間を表示します。これは自己申告の目標との一致率で、一般的なモデル精度の評価ではありません。映像・測定履歴は保存せず、感度と性能設定だけをlocalStorageに保存します。
+
+> 中文：选择摄像头后可进入练习页面，逐项调整表情触发阈值并进行3秒自测。降低阈值可能增加误触发，建议先改善光线和正脸姿势。该统计不是经过标注数据集验证的模型准确率，也不承诺提高真实识别精度。
+
+### 起動・障害回復 / 启动与故障恢复
+
+- ONNXとMediaPipeを並列に準備し、初回推論後にゲームを開始します。準備画面にモデルごとの経過秒数を表示します。
+- GPUロード全体が失敗した場合、独立したWASMランタイムへ降格します。公式の外部WASM設定でJS/WASMペアを `generated/ort/` に統一し、不要なJSEPと重複バイナリを除去しました。
+- 500ms以上古い表情では次の動作を開始しません。実行中のジャンプ等は完了させます。
+- 通常フレーム5秒、初回20秒、初期化45秒の監視を行い、5回連続失敗した場合も停止・再試行を案内します。
+- 一時停止は技能・無敵時間・冷却も停止します。別タブへ移動すると自動停止し、復帰後は手動で再開します。
+- `.github/workflows/check-web.yml` はPRとWeb分岐のpushでルート/PagesサブパスのビルドとChromium E2Eを実行します。`check:production` はJS/WASMペア、重複WASM、25MiB単一ファイル上限、100MiB総容量も確認します。
+
+> 中文：测试覆盖无WebGPU、GPU文件404、摄像头拒绝、AI错误恢复、校准与设置持久化。自动化摄像头使用模拟画面，不能替代真人识别准确率或Safari/手机实机测试。浏览器HTTP缓存可复用下载内容；退出时释放模型，未新增离线缓存或长驻后台摄像头。
 
 ## 既知の制限 / 已知限制
 

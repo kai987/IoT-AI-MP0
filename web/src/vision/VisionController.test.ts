@@ -56,7 +56,7 @@ class FakeWorker {
     }
   }
 
-  private emit(message: VisionWorkerResponse): void {
+  public emit(message: VisionWorkerResponse): void {
     for (const listener of this.messageListeners) {
       listener(new MessageEvent("message", { data: message }));
     }
@@ -123,13 +123,46 @@ describe("camera frame capture fallback", () => {
     const captured = await captureVideoFrame(video, null, canvasFactory);
 
     expect(canvasFactory).toHaveBeenCalledWith(640, 360);
-    expect(drawImage).toHaveBeenCalledWith(video, 0, 0);
+    expect(drawImage).toHaveBeenCalledWith(video, 0, 0, 640, 360);
     expect(getImageData).toHaveBeenCalledWith(0, 0, 640, 360);
     expect(captured).toBe(expected);
   });
 });
 
 describe("VisionController lifecycle", () => {
+  it("reports recoverable errors and stops after repeated failures", async () => {
+    const video = document.createElement("video");
+    const worker = new FakeWorker();
+    const camera = fakeCamera(video);
+    const controller = new VisionController({ camera: camera as unknown as CameraController, createWorker: () => worker, baseUrl: "/" });
+    const listener = vi.fn();
+    controller.subscribe(listener);
+    await controller.start({ video });
+    worker.emit({ type: "ERROR", message: "GPU failed", recoverable: true, frameId: 0 });
+    expect(listener).toHaveBeenCalledWith(expect.objectContaining({ type: "error", recoverable: true }));
+    for (let index = 0; index < 4; index++) worker.emit({ type: "ERROR", message: "GPU failed", recoverable: true });
+    await controller.stop();
+    expect(listener).toHaveBeenCalledWith(expect.objectContaining({ type: "error", recoverable: false }));
+    expect(worker.terminate).toHaveBeenCalledOnce();
+  });
+
+  it("terminates a worker that never completes an in-flight frame", async () => {
+    vi.useFakeTimers();
+    try {
+      const video = document.createElement("video");
+      Object.defineProperty(video, "readyState", { value: HTMLMediaElement.HAVE_CURRENT_DATA });
+      const worker = new FakeWorker();
+      const camera = fakeCamera(video);
+      const controller = new VisionController({ camera: camera as unknown as CameraController, createWorker: () => worker, baseUrl: "/", createBitmap: () => Promise.resolve({ width: 1280, height: 720, close: vi.fn() } as unknown as ImageBitmap), now: () => performance.now() });
+      const listener = vi.fn();
+      controller.subscribe(listener);
+      await controller.start({ video });
+      await vi.advanceTimersByTimeAsync(20_100);
+      expect(listener).toHaveBeenCalledWith(expect.objectContaining({ type: "error", recoverable: false }));
+      await controller.stop();
+      expect(worker.terminate).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
+  });
   it("never posts a pending bitmap after STOP", async () => {
     const video = document.createElement("video");
     Object.defineProperty(video, "readyState", {

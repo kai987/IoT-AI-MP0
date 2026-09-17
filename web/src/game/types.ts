@@ -120,6 +120,7 @@ export interface ActionControllerSnapshot {
 }
 
 export interface GameSnapshot {
+  readonly gameTime: number;
   readonly state: GameState;
   readonly mode: ControlMode;
   readonly player: PlayerSnapshot;

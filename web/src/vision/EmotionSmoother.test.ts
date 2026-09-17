@@ -10,6 +10,12 @@ function probabilities(topIndex: number, topValue: number): number[] {
 }
 
 describe("EmotionSmoother", () => {
+  it("honors a separate threshold for each calibrated expression", () => {
+    const smoother = new EmotionSmoother({ emotionThresholds: { happiness: 0.8, surprise: 0.4 }, alpha: 1, switchConfirmations: 1 });
+    expect(smoother.update(probabilities(4, 0.75)).uncertain).toBe(true);
+    expect(smoother.update(probabilities(7, 0.5)).emotion).toBe("surprise");
+    expect(smoother.update(probabilities(4, 0.85)).emotion).toBe("happiness");
+  });
   it("requires two moderate-confidence confirmations", () => {
     const smoother = new EmotionSmoother();
     const first = smoother.update(probabilities(4, 0.65));

@@ -12,7 +12,7 @@ test("camera denial is recoverable and keyboard mode remains available", async (
       },
     });
   });
-  await page.goto("/");
+  await page.goto("./");
   await page.getByTestId("camera-mode").click();
   await expect(page.getByRole("alert")).toContainText("カメラ");
   await page.getByRole("button", { name: "キーボードで続ける" }).click();

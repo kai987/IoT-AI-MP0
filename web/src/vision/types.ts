@@ -71,6 +71,9 @@ export interface EmotionDecision {
 }
 
 export interface VisionResult extends EmotionDecision {
+  readonly cameraFps?: number;
+  readonly analysisWidth?: number;
+  readonly analysisHeight?: number;
   readonly frameId: number;
   readonly timestampMs: number;
   readonly inferenceMs: number;
@@ -108,6 +111,9 @@ export interface CameraStartOptions {
 
 export interface VisionStartOptions extends CameraStartOptions {
   readonly initialAiFps?: number;
+  readonly maxAiFps?: number;
+  readonly analyzeEveryNFrames?: number;
+  readonly analysisWidth?: number;
 }
 
 export interface VisionAssetUrls {
