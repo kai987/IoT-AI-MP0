@@ -1,0 +1,34 @@
+appId: io.github.kai987.emotionrunner.electron
+productName: Emotion Runner Electron
+directories:
+  output: release
+# 実行に必要なファイルだけ同梱 / 只打包运行文件，不包含Python、报告、截图或测试。
+files:
+  - src/**/*.cjs
+  - web/**/*
+  - package.json
+asar: true
+npmRebuild: false
+mac:
+  category: public.app-category.games
+  target:
+    - target: dmg
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
+  # Python版と別アプリとして権限を要求 / 独立于Python版申请摄像头权限。
+  extendInfo:
+    NSCameraUsageDescription: 表情によるゲーム操作のためカメラを使用します。映像は端末内だけで処理され、外部には送信されません。
+  hardenedRuntime: true
+  entitlements: packaging/entitlements.mac.plist
+  entitlementsInherit: packaging/entitlements.mac.inherit.plist
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+artifactName: Emotion-Runner-Electron-${version}-${os}-${arch}.${ext}

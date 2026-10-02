@@ -10,6 +10,7 @@ Emotion Runner Webは、カメラの表情認識でジャンプ、ブースト�
 
 - macOS版：Python、Pygame、OpenCV、MediaPipe Pythonを使用し、Finderから独立アプリとして実行します。
 - Web版：URLを開くだけで実行し、カメラの権限はブラウザが管理します。
+- Electron版：[`desktop/electron`](../desktop/electron/README.md) がこの Web 版とモデルを同梱します。独立ウィンドウでローカル動作し、Python 版を置き換えません。
 - ゲームルールは共通です。初期ライフは5、表情を保持すると同じ動作サイクルを繰り返し、表情を変えると現在のサイクル完了後に新しい動作へ切り替わります。
 - Web版のカメラ要求は `ideal: 1280×720 / 30 FPS`、AI解析は12 FPSから開始して端末性能に応じ6〜20 FPSで調整します。実際の解像度とFPSはブラウザとカメラが決定します。
 

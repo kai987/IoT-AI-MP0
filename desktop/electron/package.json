@@ -1,0 +1,24 @@
+{
+  "name": "emotion-runner-electron",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Emotion Runner desktop edition — local camera AI, no Python runtime required",
+  "author": "Emotion Runner contributors",
+  "main": "src/main.cjs",
+  "engines": { "node": ">=24 <25", "npm": ">=11" },
+  "scripts": {
+    "build": "node scripts/build-web.mjs",
+    "start": "npm run build && electron .",
+    "start:built": "electron .",
+    "test": "node --test test/*.test.cjs",
+    "test:smoke": "node test/smoke.mjs",
+    "pack": "npm run build && electron-builder --dir --publish never",
+    "pack:mac": "npm run build && electron-builder --mac --dir --arm64 --publish never -c.mac.identity=- -c.mac.hardenedRuntime=false",
+    "dist:mac": "npm run build && electron-builder --mac dmg zip --arm64 --publish never -c.mac.identity=- -c.mac.hardenedRuntime=false",
+    "dist:win": "npm run build && electron-builder --win nsis --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3"
+  }
+}

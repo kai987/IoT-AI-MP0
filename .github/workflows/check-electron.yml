@@ -1,0 +1,50 @@
+name: Check Emotion Runner Electron
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  desktop-check:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            package: pack:mac
+            executable: release/mac-arm64/Emotion Runner Electron.app/Contents/MacOS/Emotion Runner Electron
+          - os: windows-latest
+            package: pack
+            executable: release/win-unpacked/Emotion Runner Electron.exe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            desktop/electron/package-lock.json
+      - run: npm --prefix web ci
+      - run: npm --prefix desktop/electron ci
+      - run: npm --prefix desktop/electron test
+      - run: npm --prefix desktop/electron run build
+      - run: npm --prefix desktop/electron run test:smoke
+      - run: npm --prefix desktop/electron run ${{ matrix.package }}
+      - run: npm run test:smoke -- --executable "${{ github.workspace }}/desktop/electron/${{ matrix.executable }}"
+        working-directory: desktop/electron
+      # 実行権限を保った ZIP を保存 / 归档应用，避免下载后丢失 macOS 可执行权限。
+      - if: runner.os == 'macOS'
+        run: ditto -c -k --sequesterRsrc --keepParent "release/mac-arm64/Emotion Runner Electron.app" "release/Emotion-Runner-Electron-macos-arm64.zip"
+        working-directory: desktop/electron
+      - if: runner.os == 'Windows'
+        run: Compress-Archive -Path release/win-unpacked/* -DestinationPath release/Emotion-Runner-Electron-windows-x64.zip
+        working-directory: desktop/electron
+        shell: pwsh
+      - uses: actions/upload-artifact@v7
+        if: success()
+        with:
+          name: emotion-runner-electron-${{ matrix.os }}
+          path: desktop/electron/release/*.zip
+          retention-days: 7

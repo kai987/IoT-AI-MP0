@@ -2,6 +2,14 @@
 
 OpenCV DNNでカメラ映像の複数の顔を検出し、各顔の外見上の表情をリアルタイムに表示するプロジェクトです。ゲーム操作用にMediaPipe Face Landmarkerの478点と52種のblendshapeから口・眉・目の特徴量も抽出します。DeepFaceおよびTensorFlow Pythonフレームワークは使用しません。
 
+## 実行方式 / 运行版本
+
+- **Python App（既存・維持）**：`emotion_runner/`、OpenCV / Pygame、PyInstaller。従来の実行・ビルド方法は変更しません。
+- **Web 版**：[`web/README.md`](web/README.md)。ブラウザでローカル AI を実行します。
+- **Electron 版（追加）**：[`desktop/electron/README.md`](desktop/electron/README.md)。Web の日文 UI・ゲーム・AI を再利用し、モデル同梱の独立デスクトップアプリにします。Python App とデータ保存先・配布先を分離します。
+
+> 中文：三个版本并存。新增 Electron 版不删除、不替换现有 Python App；运行 Electron 成品不需要安装 Python。
+
 ## 推論の流れ
 
 1. YuNetで顔と、両目・鼻・口両端の5点ランドマークを検出する。
