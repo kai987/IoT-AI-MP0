@@ -1,5 +1,6 @@
 import {
   EMOTION_INPUT_DIMS,
+  EMOTION_INPUT_SIZE,
   prepareEmotionInput,
   softmax,
 } from "./preprocessing";
@@ -134,6 +135,8 @@ export class EmotionClassifier {
   private readonly modelUrl: string;
   private session: OrtSessionLike;
   private fallbackPromise: Promise<void> | null = null;
+  // 推論終了まで入力を貸し出す / 输入缓冲区在推理完成前保持独占，避免并发覆盖。
+  private readonly availableInputBuffers: Float32Array[] = [];
   private closed = false;
 
   private constructor(
@@ -233,21 +236,30 @@ export class EmotionClassifier {
     if (inputName === undefined || outputName === undefined) {
       throw new Error("Emotion model tensor names are unavailable");
     }
-    const input = new this.ort.Tensor(
-      "float32",
-      prepareEmotionInput(imageData),
-      EMOTION_INPUT_DIMS,
-    );
-    const outputs = await session.run({ [inputName]: input });
-    const output = outputs[outputName];
-    if (output === undefined) {
-      throw new Error(`Emotion model did not return output ${outputName}`);
+    const buffer = this.availableInputBuffers.pop() ??
+      new Float32Array(EMOTION_INPUT_SIZE * EMOTION_INPUT_SIZE * 3);
+    try {
+      const input = new this.ort.Tensor(
+        "float32",
+        prepareEmotionInput(imageData, buffer),
+        EMOTION_INPUT_DIMS,
+      );
+      const outputs = await session.run({ [inputName]: input });
+      const output = outputs[outputName];
+      if (output === undefined) {
+        throw new Error(`Emotion model did not return output ${outputName}`);
+      }
+      const outputData =
+        typeof output.getData === "function"
+          ? await output.getData()
+          : output.data;
+      return softmax(toNumericScores(outputData));
+    } finally {
+      // 通常の逐次推論用に一つだけ保持 / 仅保留一个供常规顺序推理复用的缓冲区。
+      if (!this.closed && this.availableInputBuffers.length === 0) {
+        this.availableInputBuffers.push(buffer);
+      }
     }
-    const outputData =
-      typeof output.getData === "function"
-        ? await output.getData()
-        : output.data;
-    return softmax(toNumericScores(outputData));
   }
 
   private async fallbackToWasm(error: unknown): Promise<void> {
@@ -289,6 +301,7 @@ export class EmotionClassifier {
       return;
     }
     this.closed = true;
+    this.availableInputBuffers.length = 0;
     await this.session.release();
   }
 }

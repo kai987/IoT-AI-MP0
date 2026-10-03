@@ -56,13 +56,18 @@ export class GameEngine {
   private actionTipUntil = 0;
   private nowValue = 0;
   private wallTimeValue = 0;
-  private pausedAt: number | null = null;
-  private pausedSeconds = 0;
+  private simulationOrigin = 0;
+  private accumulatedSeconds = 0;
+  private clockBoundaryWallTime: number | null = null;
   private lastEmotionAt = Number.NEGATIVE_INFINITY;
   private nextEntityId = 1;
 
   public constructor(options: GameEngineOptions = {}) {
     this.settings = options.settings ?? DEFAULT_GAME_SETTINGS;
+    if (!Number.isFinite(this.settings.window.simulationStepSeconds) || this.settings.window.simulationStepSeconds <= 0 ||
+        !Number.isFinite(this.settings.window.maxCatchUpSeconds) || this.settings.window.maxCatchUpSeconds < this.settings.window.simulationStepSeconds) {
+      throw new RangeError("Simulation step must be positive and within the finite catch-up budget");
+    }
     this.random = new SeededRandom(options.seed);
     this.audio = options.audio ?? new AudioManager(undefined, this.settings);
     this.highScoreStorage = options.highScoreStorage ?? new HighScoreStorage();
@@ -85,6 +90,8 @@ export class GameEngine {
   }
 
   public setMode(mode: ControlMode, now = this.nowValue): void {
+    // 呼び出し API は維持。実時間で技能時計を進めない / 保持调用接口，不用外部实际时间推进技能时钟。
+    void now;
     this.modeValue = mode;
     if (mode === "keyboard") {
       this.latestEmotionSample = {
@@ -93,15 +100,16 @@ export class GameEngine {
         features: null,
         uncertain: false,
       };
-      this.controller.update(this.latestEmotionSample, now);
+      this.controller.update(this.latestEmotionSample, this.nowValue);
     }
   }
 
   public start(now = this.wallTimeValue): void {
     this.nowValue = finiteTime(now);
     this.wallTimeValue = this.nowValue;
-    this.pausedAt = null;
-    this.pausedSeconds = 0;
+    this.simulationOrigin = this.nowValue;
+    this.accumulatedSeconds = 0;
+    this.clockBoundaryWallTime = this.wallTimeValue;
     this.lastEmotionAt = Number.NEGATIVE_INFINITY;
     this.latestEmotionSample = UNCERTAIN_EMOTION_SAMPLE;
     this.events.length = 0;
@@ -131,12 +139,12 @@ export class GameEngine {
 
   public togglePause(now = this.wallTimeValue): GameState {
     if (this.stateValue === GameState.Playing) {
-      this.pausedAt = Math.max(this.wallTimeValue, finiteTime(now));
+      this.wallTimeValue = Math.max(this.wallTimeValue, finiteTime(now));
       this.stateValue = GameState.Paused;
       this.audio.setPaused(true);
     } else if (this.stateValue === GameState.Paused) {
-      this.pausedSeconds += Math.max(0, finiteTime(now) - (this.pausedAt ?? now));
-      this.pausedAt = null;
+      this.wallTimeValue = Math.max(this.wallTimeValue, finiteTime(now));
+      this.clockBoundaryWallTime = this.wallTimeValue;
       this.invalidateEmotion();
       this.stateValue = GameState.Playing;
       this.audio.setPaused(false);
@@ -150,6 +158,8 @@ export class GameEngine {
 
   public returnToMenu(): void {
     this.stateValue = GameState.Menu;
+    this.accumulatedSeconds = 0;
+    this.clockBoundaryWallTime = null;
     this.audio.setPaused(false);
     this.audio.playMusic("menu");
   }
@@ -163,8 +173,7 @@ export class GameEngine {
     if (this.stateValue !== GameState.Playing || this.modeValue !== "camera") {
       return null;
     }
-    const timestamp = this.gameTime(now);
-    this.nowValue = Math.max(this.nowValue, timestamp);
+    const timestamp = this.nowValue;
     const decision = this.controller.update(sample, timestamp);
     this.advanceFaceAction(timestamp);
     return decision;
@@ -180,11 +189,6 @@ export class GameEngine {
     this.controller.invalidate();
   }
 
-  /** 一時停止を除いた時間 / 所有技能使用扣除暂停时长的游戏时间。 */
-  private gameTime(wallNow: number): number {
-    return (this.pausedAt ?? finiteTime(wallNow)) - this.pausedSeconds;
-  }
-
   public requestAction(
     action: GameAction,
     source: ActionSource = "keyboard",
@@ -193,8 +197,7 @@ export class GameEngine {
     if (this.stateValue !== GameState.Playing) {
       return null;
     }
-    const timestamp = this.gameTime(now);
-    this.nowValue = Math.max(this.nowValue, timestamp);
+    const timestamp = this.nowValue;
     if (source === "face") {
       const decision = this.updateEmotion(
         {
@@ -215,24 +218,45 @@ export class GameEngine {
 
   public update(deltaSeconds: number, now: number): void {
     this.wallTimeValue = finiteTime(now);
-    const timestamp = this.gameTime(now);
-    this.nowValue = Math.max(this.nowValue, timestamp);
     if (this.stateValue !== GameState.Playing) {
       return;
     }
 
-    const delta = Math.min(
-      this.settings.window.maxDeltaSeconds,
-      Math.max(0, Number.isFinite(deltaSeconds) ? deltaSeconds : 0),
-    );
-    this.elapsedValue += delta;
+    let frameDelta = Math.max(0, Number.isFinite(deltaSeconds) ? deltaSeconds : 0);
+    if (this.clockBoundaryWallTime !== null) {
+      frameDelta = Math.min(
+        frameDelta,
+        Math.max(0, this.wallTimeValue - this.clockBoundaryWallTime),
+      );
+      this.clockBoundaryWallTime = null;
+    }
+    // 通常の低 FPS は全時間を蓄積。長い停止だけを制限 / 普通低帧率完整累积时间，只限制长时间卡顿的追赶量。
+    const step = this.settings.window.simulationStepSeconds;
+    this.accumulatedSeconds += Math.min(frameDelta, this.settings.window.maxCatchUpSeconds);
 
+    // AI 入力の古さは実時間、動作と物理は共通のゲーム時計 / AI 输入的新鲜度按实际时间判断，动作与物理使用统一游戏时钟。
+    if (
+      this.modeValue === "camera" &&
+      this.wallTimeValue - this.lastEmotionAt > this.settings.recognition.sampleMaxAgeSeconds
+    ) {
+      this.invalidateEmotion();
+    }
+
+    while (this.accumulatedSeconds + 1e-10 >= step && this.stateValue === GameState.Playing) {
+      this.accumulatedSeconds = Math.max(0, this.accumulatedSeconds - step);
+      this.simulateStep(step);
+    }
+    if (this.stateValue !== GameState.Playing) {
+      this.accumulatedSeconds = 0;
+    }
+  }
+
+  private simulateStep(delta: number): void {
+    this.elapsedValue += delta;
+    this.nowValue = this.simulationOrigin + this.elapsedValue;
+    const timestamp = this.nowValue;
     if (this.modeValue === "camera") {
-      if (now - this.lastEmotionAt > this.settings.recognition.sampleMaxAgeSeconds) {
-        this.invalidateEmotion();
-      } else {
-        this.controller.update(this.latestEmotionSample, timestamp);
-      }
+      this.controller.update(this.latestEmotionSample, timestamp);
       this.advanceFaceAction(timestamp);
     }
 
@@ -285,7 +309,9 @@ export class GameEngine {
   }
 
   public getSnapshot(now = this.wallTimeValue): GameSnapshot {
-    const timestamp = this.gameTime(now);
+    // 描画用の実時間引数は互換性のみ。読み取りで状態を進めない / 保留绘制时实参兼容性，读取快照不会推进游戏状态。
+    void now;
+    const timestamp = this.nowValue;
     return {
       state: this.stateValue,
       gameTime: timestamp,

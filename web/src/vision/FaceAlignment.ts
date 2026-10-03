@@ -204,52 +204,94 @@ export function alignFace(
   fivePoints: readonly Point2D[],
   canvasFactory: CanvasFactory = defaultCanvasFactory,
 ): AlignedFace | null {
-  const transform = estimateSimilarityTransform(fivePoints);
-  if (transform === null) {
-    return null;
-  }
-  let drawSource: CanvasImageSource = image as CanvasImageSource;
-  if ("data" in image && image.data instanceof Uint8ClampedArray) {
-    const sourceCanvas = canvasFactory(image.width, image.height);
-    const sourceContext = sourceCanvas.getContext("2d", {
-      alpha: false,
-      willReadFrequently: true,
-    }) as AlignmentContext | null;
-    if (sourceContext === null) {
-      throw new Error("Unable to create a 2D source context");
+  return new FaceAligner(canvasFactory).align(image, fivePoints);
+}
+
+// WorkerごとにCanvasを再利用 / 每个 Worker 独立复用画布，避免逐帧创建上下文。
+export class FaceAligner {
+  private alignmentCanvas: CanvasSurface | null = null;
+  private alignmentContext: AlignmentContext | null = null;
+  private sourceCanvas: CanvasSurface | null = null;
+  private sourceContext: AlignmentContext | null = null;
+
+  public constructor(
+    private readonly canvasFactory: CanvasFactory = defaultCanvasFactory,
+  ) {}
+
+  public align(
+    image: AlignmentImageSource,
+    fivePoints: readonly Point2D[],
+  ): AlignedFace | null {
+    const transform = estimateSimilarityTransform(fivePoints);
+    if (transform === null) {
+      return null;
     }
-    sourceContext.putImageData(image, 0, 0);
-    drawSource = sourceCanvas;
+    let drawSource: CanvasImageSource = image as CanvasImageSource;
+    if ("data" in image && image.data instanceof Uint8ClampedArray) {
+      if (this.sourceCanvas === null) {
+        this.sourceCanvas = this.canvasFactory(image.width, image.height);
+        this.sourceContext = this.sourceCanvas.getContext("2d", {
+          alpha: false,
+          willReadFrequently: true,
+        });
+      }
+      if (this.sourceContext === null) {
+        throw new Error("Unable to create a 2D source context");
+      }
+      if (this.sourceCanvas.width !== image.width) {
+        this.sourceCanvas.width = image.width;
+      }
+      if (this.sourceCanvas.height !== image.height) {
+        this.sourceCanvas.height = image.height;
+      }
+      this.sourceContext.putImageData(image, 0, 0);
+      drawSource = this.sourceCanvas;
+    }
+
+    if (this.alignmentCanvas === null) {
+      this.alignmentCanvas = this.canvasFactory(
+        FACE_ALIGNMENT_SIZE,
+        FACE_ALIGNMENT_SIZE,
+      );
+      this.alignmentContext = this.alignmentCanvas.getContext("2d", {
+        alpha: false,
+        willReadFrequently: true,
+      });
+    }
+    const context = this.alignmentContext;
+    if (context === null) {
+      throw new Error("Unable to create a 2D alignment context");
+    }
+
+    // 前フレームの変換で消去領域が歪まないようにする / 清空前复位变换，防止残留上一帧画面。
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, FACE_ALIGNMENT_SIZE, FACE_ALIGNMENT_SIZE);
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.setTransform(
+      transform.a,
+      transform.b,
+      transform.c,
+      transform.d,
+      transform.tx,
+      transform.ty,
+    );
+    context.drawImage(drawSource, 0, 0);
+    return {
+      imageData: context.getImageData(
+        0,
+        0,
+        FACE_ALIGNMENT_SIZE,
+        FACE_ALIGNMENT_SIZE,
+      ),
+      transform,
+    };
   }
 
-  const canvas = canvasFactory(FACE_ALIGNMENT_SIZE, FACE_ALIGNMENT_SIZE);
-  const context = canvas.getContext("2d", {
-    alpha: false,
-    willReadFrequently: true,
-  }) as AlignmentContext | null;
-  if (context === null) {
-    throw new Error("Unable to create a 2D alignment context");
+  public dispose(): void {
+    this.alignmentCanvas = null;
+    this.alignmentContext = null;
+    this.sourceCanvas = null;
+    this.sourceContext = null;
   }
-
-  context.clearRect(0, 0, FACE_ALIGNMENT_SIZE, FACE_ALIGNMENT_SIZE);
-  context.imageSmoothingEnabled = true;
-  context.imageSmoothingQuality = "high";
-  context.setTransform(
-    transform.a,
-    transform.b,
-    transform.c,
-    transform.d,
-    transform.tx,
-    transform.ty,
-  );
-  context.drawImage(drawSource, 0, 0);
-  return {
-    imageData: context.getImageData(
-      0,
-      0,
-      FACE_ALIGNMENT_SIZE,
-      FACE_ALIGNMENT_SIZE,
-    ),
-    transform,
-  };
 }

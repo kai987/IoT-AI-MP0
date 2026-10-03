@@ -43,6 +43,13 @@ export const VISION_HEALTH = {
   maxConsecutiveErrors: 5, // 連続失敗上限 / 达到此次数后停止AI并显示恢复操作。
   initializationTimeoutMs: 45_000, // モデル読み込み / 模型下载及初始化超时。
 } as const;
+// 時間基準の安定化 / 以时间而非帧数稳定表情，保持不同AI帧率下的响应一致。
+export const VISION_STABILITY = {
+  referenceIntervalMs: 1000 / 12, // 基準間隔 / 原12 FPS平滑参数对应的采样间隔。
+  switchConfirmationMs: 1000 / 12, // 切替確認時間 / 中等置信度候选至少保持此时间。
+  sampleGapResetMs: 750, // 古い履歴を破棄 / 采样中断超过此时间后清除平滑历史。
+  latencyWindowSize: 60, // 遅延統計の窓 / 最近60次有效结果的端到端延迟统计。
+} as const;
 export const PRACTICE_EMOTIONS = ["neutral", "happiness", "surprise", "anger", "sadness"] as const;
 export type PracticeEmotion = typeof PRACTICE_EMOTIONS[number];
 export const EMOTION_NAMES: Record<PracticeEmotion, string> = { neutral: "無表情", happiness: "喜び", surprise: "驚き", anger: "怒り", sadness: "悲しみ" };

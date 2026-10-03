@@ -29,3 +29,6 @@ htmlcov/
 /MP-0_emotion_result.jpg
 *_emotion_result.jpg
 *.DS_Store
+
+# スモーク診断（CIの一時成果物） / 冒烟测试诊断，仅作为临时CI产物保存。
+/desktop/electron/smoke-evidence/

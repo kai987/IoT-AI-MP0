@@ -1,10 +1,39 @@
 name: Check Emotion Runner Electron
 on:
+  push:
+    branches: ["main", "codex/electron-*"]
+    paths: ["web/**", "desktop/electron/**", "models/**", ".github/workflows/check-electron.yml"]
+  pull_request:
+    paths: ["web/**", "desktop/electron/**", "models/**", ".github/workflows/check-electron.yml"]
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: electron-check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
+  # 通常 push は軽量検証、PR/手動では実アプリも検証 / 普通推送执行快速检查，PR/手动追加桌面集成测试。
+  source-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            desktop/electron/package-lock.json
+      - run: npm --prefix web ci
+      - run: npm --prefix desktop/electron ci
+      - run: npm --prefix web run check
+      - run: npm --prefix desktop/electron test
   desktop-check:
+    needs: source-check
+    if: github.event_name != 'push'
     strategy:
       fail-fast: false
       matrix:
@@ -17,6 +46,8 @@ jobs:
             executable: release/win-unpacked/Emotion Runner Electron.exe
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
+    env:
+      EMOTION_RUNNER_SMOKE_EVIDENCE_DIR: ${{ github.workspace }}/desktop/electron/smoke-evidence
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -30,9 +61,9 @@ jobs:
       - run: npm --prefix desktop/electron ci
       - run: npm --prefix desktop/electron test
       - run: npm --prefix desktop/electron run build
-      - run: npm --prefix desktop/electron run test:smoke
+      - run: npm --prefix desktop/electron run test:smoke -- --evidence-label development
       - run: npm --prefix desktop/electron run ${{ matrix.package }}
-      - run: npm run test:smoke -- --executable "${{ github.workspace }}/desktop/electron/${{ matrix.executable }}"
+      - run: npm run test:smoke -- --evidence-label packaged --executable "${{ github.workspace }}/desktop/electron/${{ matrix.executable }}"
         working-directory: desktop/electron
       # 実行権限を保った ZIP を保存 / 归档应用，避免下载后丢失 macOS 可执行权限。
       - if: runner.os == 'macOS'
@@ -47,4 +78,15 @@ jobs:
         with:
           name: emotion-runner-electron-${{ matrix.os }}
           path: desktop/electron/release/*.zip
+          retention-days: 7
+      # 失敗時も診断を保存。合成カメラ以外の映像・プロファイルはアップロードしない / 失败也上传诊断，仅保存合成摄像头截图，不上传浏览器配置目录。
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: electron-smoke-evidence-${{ matrix.os }}
+          path: |
+            desktop/electron/smoke-evidence/*/result.json
+            desktop/electron/smoke-evidence/*/*.png
+            desktop/electron/smoke-evidence/*/*.log
+          if-no-files-found: warn
           retention-days: 7

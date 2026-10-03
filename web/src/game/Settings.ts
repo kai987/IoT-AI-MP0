@@ -15,7 +15,8 @@ export interface GameSettings {
     readonly targetFps: number;
     readonly analyzeEveryNFrames: number;
     readonly title: string;
-    readonly maxDeltaSeconds: number;
+    readonly simulationStepSeconds: number;
+    readonly maxCatchUpSeconds: number;
   };
   readonly layout: {
     readonly hudX: number;
@@ -153,7 +154,10 @@ export const DEFAULT_GAME_SETTINGS = {
     targetFps: 120,
     analyzeEveryNFrames: 2,
     title: "Emotion Runner - Facial Expression Parkour",
-    maxDeltaSeconds: 0.05,
+    // 固定物理更新の間隔。描画 FPS から独立 / 固定物理步长，独立于画面刷新率。
+    simulationStepSeconds: 1 / 120,
+    // 長い停止後の追いつき上限。超過分は全ゲーム時計から除外 / 长时间卡顿后最多追赶的时长，超出部分从所有游戏计时中一致排除。
+    maxCatchUpSeconds: 0.25,
   },
   // Python: settings.py の HUD_*、ACTION_TIP_*、SKILL_CARD_*。
   // Python对应：settings.py 的HUD、动作提示框与技能卡布局参数。

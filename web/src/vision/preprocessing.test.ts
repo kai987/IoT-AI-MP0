@@ -43,6 +43,17 @@ describe("emotion preprocessing", () => {
     expect(probabilities[0]).toBeGreaterThan(probabilities[1] ?? 0);
   });
 
+  it("overwrites all channels of a caller-owned buffer without allocating a replacement", () => {
+    const destination = new Float32Array(EMOTION_INPUT_SIZE ** 2 * 3).fill(Number.NaN);
+    expect(prepareEmotionInput(constantImage(127), destination)).toBe(destination);
+    expect(destination.every(Number.isFinite)).toBe(true);
+    expect(prepareEmotionInput(constantImage(255), destination)).toBe(destination);
+    expect(destination[0]).toBeCloseTo((1 - 0.485) / 0.229, 6);
+    expect(destination[destination.length - 1]).toBeCloseTo((1 - 0.406) / 0.225, 6);
+    expect(() => prepareEmotionInput(constantImage(127), new Float32Array(3)))
+      .toThrow(/buffer/);
+  });
+
   it("rejects malformed model output", () => {
     expect(() => softmax([1, 2])).toThrow(/exactly 8/);
     expect(() => softmax([1, 2, 3, 4, 5, 6, 7, Number.NaN])).toThrow(

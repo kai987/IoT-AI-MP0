@@ -178,4 +178,91 @@ describe("EmotionClassifier", () => {
       resolveLocalAssetUrl("https://invalid.example/model.onnx"),
     ).toThrow(/Cross-origin/);
   });
+
+  it("reuses one input buffer for completed sequential inference calls", async () => {
+    const wasmSession = session([0, 0, 0, 0, 4, 0, 0, 0]);
+    const classifier = await EmotionClassifier.create({
+      modelUrl: "/generated/models/emotion.onnx",
+      ortWasmRoot: "/generated/ort/",
+      ort: runtime(() => Promise.resolve(wasmSession)),
+      webGpuAvailable: false,
+    });
+    await classifier.classify(emotionImage());
+    const firstBuffer = wasmSession.run.mock.calls[0]?.[0].input?.data;
+    await classifier.classify(emotionImage());
+    expect(wasmSession.run.mock.calls[1]?.[0].input?.data).toBe(firstBuffer);
+    expect(firstBuffer).toBeInstanceOf(Float32Array);
+    await classifier.close();
+  });
+
+  it("does not overwrite an input buffer while a concurrent inference is pending", async () => {
+    const buffers: Float32Array[] = [];
+    const complete: (() => void)[] = [];
+    const concurrentSession: OrtSessionLike = {
+      inputNames: ["input"],
+      outputNames: ["output"],
+      outputMetadata: [{ shape: [1, 8] }],
+      run: (feeds) => {
+        buffers.push(feeds.input?.data as Float32Array);
+        return new Promise((resolve) => {
+          complete.push(() => resolve({ output: { data: new Float32Array(8) } }));
+        });
+      },
+      release: () => Promise.resolve(),
+    };
+    const classifier = await EmotionClassifier.create({
+      modelUrl: "/generated/models/emotion.onnx",
+      ortWasmRoot: "/generated/ort/",
+      ort: runtime(() => Promise.resolve(concurrentSession)),
+      webGpuAvailable: false,
+    });
+    const dark = emotionImage();
+    const light = emotionImage();
+    light.data.fill(255);
+    const first = classifier.classify(dark);
+    const second = classifier.classify(light);
+    expect(buffers).toHaveLength(2);
+    expect(buffers[0]).not.toBe(buffers[1]);
+    expect(buffers[0]?.[0]).toBeCloseTo(-0.485 / 0.229, 6);
+    expect(buffers[1]?.[0]).toBeCloseTo((1 - 0.485) / 0.229, 6);
+    complete[0]?.();
+    complete[1]?.();
+    await Promise.all([first, second]);
+    await classifier.close();
+  });
+
+  it("keeps a buffer leased until asynchronous GPU output download completes", async () => {
+    const buffers: Float32Array[] = [];
+    let completeDownload: (() => void) | undefined;
+    let runCount = 0;
+    const gpuSession: OrtSessionLike = {
+      inputNames: ["input"],
+      outputNames: ["output"],
+      outputMetadata: [{ shape: [1, 8] }],
+      run: (feeds) => {
+        buffers.push(feeds.input?.data as Float32Array);
+        runCount += 1;
+        return Promise.resolve({ output: runCount === 1 ? {
+          getData: () => new Promise((resolve) => {
+            completeDownload = () => resolve(new Float32Array(8));
+          }),
+        } : { data: new Float32Array(8) } });
+      },
+      release: () => Promise.resolve(),
+    };
+    const classifier = await EmotionClassifier.create({
+      modelUrl: "/generated/models/emotion.onnx",
+      ortWasmRoot: "/generated/ort/",
+      ort: runtime(() => Promise.resolve(gpuSession)),
+      webGpuAvailable: true,
+    });
+    const first = classifier.classify(emotionImage());
+    await Promise.resolve();
+    expect(completeDownload).toBeTypeOf("function");
+    const second = classifier.classify(emotionImage());
+    expect(buffers[0]).not.toBe(buffers[1]);
+    completeDownload?.();
+    await Promise.all([first, second]);
+    await classifier.close();
+  });
 });

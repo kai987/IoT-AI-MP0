@@ -1,16 +1,18 @@
 /// <reference lib="webworker" />
 
 import { blendFacialFeatures } from "./FacialFeatures";
-import { alignFace } from "./FaceAlignment";
-import { assessFaceQuality } from "./FaceQuality";
+import { FaceAligner } from "./FaceAlignment";
+import { assessFaceQuality, DEFAULT_FACE_QUALITY_THRESHOLDS, FaceQualityWorkspace, minimumFaceSizeForFrame } from "./FaceQuality";
 import { EmotionClassifier } from "./EmotionClassifier";
-import { EmotionSmoother } from "./EmotionSmoother";
+import { EmotionSmoother, timeAdjustedAlpha } from "./EmotionSmoother";
+import { VISION_STABILITY } from "../RuntimeSettings";
 import { FaceLandmarkerRuntime } from "./FaceLandmarkerRuntime";
 import type {
   FacialFeatures,
   QualityIssue,
   VisionAssetUrls,
   VisionResult,
+  VisionStageTimings,
 } from "./types";
 import {
   closeFrameFromUnknownMessage,
@@ -32,6 +34,10 @@ let smoother = new EmotionSmoother();
 let classifier: EmotionClassifier | null = null;
 let landmarker: FaceLandmarkerRuntime | null = null;
 let smoothedFeatures: FacialFeatures | null = null;
+let lastFeatureTimestampMs: number | null = null;
+let stateEpoch = 0;
+const aligner = new FaceAligner();
+const qualityWorkspace = new FaceQualityWorkspace();
 let busy = false;
 let stopping = false;
 
@@ -60,6 +66,7 @@ function emptyResult(
   cameraWidth: number,
   cameraHeight: number,
   faceBox: VisionResult["faceBox"] = null,
+  stageTimings?: VisionStageTimings,
 ): VisionResult {
   const inferenceMs = Math.max(0, performance.now() - startedAt);
   return {
@@ -80,6 +87,7 @@ function emptyResult(
     probabilities: new Array<number>(8).fill(0),
     qualityIssue,
     features: null,
+    stageTimings,
   };
 }
 
@@ -102,10 +110,13 @@ function replaceSmoother(options: WorkerInferenceOptions): void {
     confidenceThreshold: options.confidenceThreshold,
     marginThreshold: options.marginThreshold,
     switchConfirmations: options.switchConfirmations,
+    switchConfirmationMs: options.switchConfirmationMs,
     highConfidenceSwitch: options.highConfidenceSwitch,
     emotionThresholds: options.emotionThresholds,
   });
   smoothedFeatures = null;
+  lastFeatureTimestampMs = null;
+  stateEpoch += 1;
 }
 
 async function closeRuntimes(): Promise<void> {
@@ -115,6 +126,10 @@ async function closeRuntimes(): Promise<void> {
   landmarker = null;
   smoother.reset();
   smoothedFeatures = null;
+  lastFeatureTimestampMs = null;
+  stateEpoch += 1;
+  aligner.dispose();
+  qualityWorkspace.dispose();
   activeLandmarker?.close();
   await activeClassifier?.close();
 }
@@ -190,12 +205,16 @@ async function processFrame(
 
   busy = true;
   const startedAt = performance.now();
+  const epoch = stateEpoch;
+  const stageTimings = { landmarksMs: 0, alignmentQualityMs: 0, classificationMs: 0, smoothingMs: 0 };
   try {
     const detection = activeLandmarker.detect(frame, timestampMs);
+    stageTimings.landmarksMs = Math.max(0, performance.now() - startedAt);
     const face = detection.primaryFace;
     if (face === null) {
       smoother.reset();
       smoothedFeatures = null;
+      lastFeatureTimestampMs = null;
       publishResult(
         activeClassifier.provider,
         emptyResult(
@@ -206,15 +225,29 @@ async function processFrame(
           "no-face",
           frame.width,
           frame.height,
+          null,
+          stageTimings,
         ),
       );
       return;
     }
 
-    const aligned = alignFace(frame, face.fivePoints);
+    // 小さい顔は整列前に除外 / 过小人脸先退出，不做画布对齐及像素分析。
+    if (Math.min(face.pixelBox.width, face.pixelBox.height) < minimumFaceSizeForFrame(frame.width)) {
+      smoother.reset();
+      smoothedFeatures = null;
+      lastFeatureTimestampMs = null;
+      publishResult(activeClassifier.provider, emptyResult(frameId, timestampMs, startedAt,
+        detection.faceCount, "small", frame.width, frame.height, face.normalizedBox, stageTimings));
+      return;
+    }
+    const alignmentStartedAt = performance.now();
+    const aligned = aligner.align(frame, face.fivePoints);
     if (aligned === null) {
       smoother.reset();
       smoothedFeatures = null;
+      lastFeatureTimestampMs = null;
+      stageTimings.alignmentQualityMs = Math.max(0, performance.now() - alignmentStartedAt);
       publishResult(
         activeClassifier.provider,
         emptyResult(
@@ -226,15 +259,19 @@ async function processFrame(
           frame.width,
           frame.height,
           face.normalizedBox,
+          stageTimings,
         ),
       );
       return;
     }
 
-    const quality = assessFaceQuality(aligned.imageData, face.pixelBox);
+    const quality = assessFaceQuality(aligned.imageData, face.pixelBox, DEFAULT_FACE_QUALITY_THRESHOLDS,
+      { frameWidth: frame.width, workspace: qualityWorkspace });
+    stageTimings.alignmentQualityMs = Math.max(0, performance.now() - alignmentStartedAt);
     if (quality.issue !== null) {
       smoother.reset();
       smoothedFeatures = null;
+      lastFeatureTimestampMs = null;
       publishResult(
         activeClassifier.provider,
         emptyResult(
@@ -246,17 +283,21 @@ async function processFrame(
           frame.width,
           frame.height,
           face.normalizedBox,
+          stageTimings,
         ),
       );
       return;
     }
 
-    smoothedFeatures =
-      smoothedFeatures === null
-        ? face.features
-        : blendFacialFeatures(smoothedFeatures, face.features);
     const providerBeforeInference = activeClassifier.provider;
+    const classificationStartedAt = performance.now();
     const probabilities = await activeClassifier.classify(aligned.imageData);
+    stageTimings.classificationMs = Math.max(0, performance.now() - classificationStartedAt);
+    if (stopping || epoch !== stateEpoch) {
+      // RESET前に開始した結果を捨て、背圧だけ解除 / 丢弃复位前开始的结果，同时通知主线程释放背压。
+      post({ type: "WARNING", code: "frame-dropped", message: "Inference history was reset", frameId });
+      return;
+    }
     if (
       providerBeforeInference === "webgpu" &&
       activeClassifier.provider === "wasm"
@@ -269,7 +310,14 @@ async function processFrame(
           "WebGPUが停止したためWASMに切り替えました。",
       });
     }
-    const decision = smoother.update(probabilities);
+    const smoothingStartedAt = performance.now();
+    const featureDelta = lastFeatureTimestampMs === null ? VISION_STABILITY.referenceIntervalMs : timestampMs - lastFeatureTimestampMs;
+    smoothedFeatures = smoothedFeatures === null || featureDelta > VISION_STABILITY.sampleGapResetMs
+      ? face.features
+      : blendFacialFeatures(smoothedFeatures, face.features, timeAdjustedAlpha(0.45, featureDelta));
+    lastFeatureTimestampMs = timestampMs;
+    const decision = smoother.update(probabilities, timestampMs);
+    stageTimings.smoothingMs = Math.max(0, performance.now() - smoothingStartedAt);
     const inferenceMs = Math.max(0, performance.now() - startedAt);
     publishResult(activeClassifier.provider, {
         ...decision,
@@ -283,10 +331,16 @@ async function processFrame(
         faceBox: face.normalizedBox,
         qualityIssue: null,
         features: smoothedFeatures,
+        stageTimings,
     });
   } catch (error) {
+    if (stopping || epoch !== stateEpoch) {
+      post({ type: "WARNING", code: "frame-dropped", message: "Inference history was reset", frameId });
+      return;
+    }
     smoother.reset();
     smoothedFeatures = null;
+    lastFeatureTimestampMs = null;
     post({
       type: "ERROR",
       message: describeError(error),
@@ -328,6 +382,8 @@ async function handleMessage(value: unknown): Promise<void> {
       case "RESET":
         smoother.reset();
         smoothedFeatures = null;
+        lastFeatureTimestampMs = null;
+        stateEpoch += 1;
         break;
       case "UPDATE_OPTIONS":
         replaceSmoother(request.options);

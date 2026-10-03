@@ -6,6 +6,7 @@ import {
   clamp,
 } from "./types";
 import { validateEightClassScores } from "./preprocessing";
+import { VISION_STABILITY } from "../RuntimeSettings";
 
 export interface EmotionSmootherOptions {
   readonly emotionThresholds?: Partial<Record<EmotionLabel, number>>;
@@ -13,14 +14,21 @@ export interface EmotionSmootherOptions {
   readonly confidenceThreshold?: number;
   readonly marginThreshold?: number;
   readonly switchConfirmations?: number;
+  readonly switchConfirmationMs?: number;
   readonly highConfidenceSwitch?: number;
+}
+
+/** 時間に応じたEMA係数 / 按采样间隔换算EMA权重，不随AI FPS改变平滑速度。 */
+export function timeAdjustedAlpha(alpha: number, elapsedMs: number): number {
+  const weight = clamp(alpha, 0, 1);
+  if (elapsedMs <= 0 || !Number.isFinite(elapsedMs)) return 0;
+  return 1 - Math.pow(1 - weight, elapsedMs / VISION_STABILITY.referenceIntervalMs);
 }
 
 const DEFAULT_OPTIONS = {
   alpha: 0.55,
   confidenceThreshold: 0.45,
   marginThreshold: 0.1,
-  switchConfirmations: 2,
   highConfidenceSwitch: 0.72,
 } as const;
 
@@ -28,12 +36,13 @@ export class EmotionSmoother {
   private readonly alpha: number;
   private readonly confidenceThreshold: number;
   private readonly marginThreshold: number;
-  private readonly switchConfirmations: number;
+  private readonly switchConfirmationMs: number;
   private readonly highConfidenceSwitch: number;
   private smoothed: number[] | null = null;
   private stableIndex: number | null = null;
   private candidateIndex: number | null = null;
-  private candidateCount = 0;
+  private candidateSinceMs: number | null = null;
+  private lastTimestampMs: number | null = null;
   private readonly emotionThresholds: Partial<Record<EmotionLabel, number>>;
 
   public constructor(options: EmotionSmootherOptions = {}) {
@@ -49,11 +58,11 @@ export class EmotionSmoother {
       0,
       1,
     );
-    this.switchConfirmations = Math.max(
-      1,
-      Math.trunc(
-        options.switchConfirmations ?? DEFAULT_OPTIONS.switchConfirmations,
-      ),
+    // 旧設定との互換性 / 旧确认帧数按12 FPS换算为持续时间，工作线程传入真实采集时刻。
+    this.switchConfirmationMs = Math.max(0,
+      options.switchConfirmationMs ??
+      (options.switchConfirmations === undefined ? VISION_STABILITY.switchConfirmationMs :
+        (Math.max(1, Math.trunc(options.switchConfirmations)) - 1) * VISION_STABILITY.referenceIntervalMs),
     );
     this.highConfidenceSwitch = clamp(
       options.highConfidenceSwitch ?? DEFAULT_OPTIONS.highConfidenceSwitch,
@@ -66,10 +75,11 @@ export class EmotionSmoother {
     this.smoothed = null;
     this.stableIndex = null;
     this.candidateIndex = null;
-    this.candidateCount = 0;
+    this.candidateSinceMs = null;
+    this.lastTimestampMs = null;
   }
 
-  public update(probabilities: ArrayLike<number>): EmotionDecision {
+  public update(probabilities: ArrayLike<number>, timestampMs?: number): EmotionDecision {
     const input = validateEightClassScores(probabilities);
     if (input.some((value) => value < 0)) {
       throw new TypeError("Emotion probabilities cannot be negative");
@@ -79,13 +89,24 @@ export class EmotionSmoother {
       throw new TypeError("Emotion probabilities must have a positive sum");
     }
     const normalized = input.map((value) => value / total);
+    const timestamp = timestampMs ?? (this.lastTimestampMs === null ? 0 : this.lastTimestampMs + VISION_STABILITY.referenceIntervalMs);
+    if (!Number.isFinite(timestamp) || timestamp < 0) {
+      throw new TypeError("Emotion timestamp must be finite and non-negative");
+    }
+    if (this.lastTimestampMs !== null && timestamp < this.lastTimestampMs) {
+      throw new RangeError("Emotion timestamps must be monotonic");
+    }
+    const elapsedMs = this.lastTimestampMs === null ? VISION_STABILITY.referenceIntervalMs : timestamp - this.lastTimestampMs;
+    if (elapsedMs > VISION_STABILITY.sampleGapResetMs) this.reset();
+    this.lastTimestampMs = timestamp;
     if (this.smoothed === null) {
       this.smoothed = [...normalized];
     } else {
+      const alpha = timeAdjustedAlpha(this.alpha, elapsedMs);
       this.smoothed = normalized.map(
         (value, index) =>
-          this.alpha * value +
-          (1 - this.alpha) * (this.smoothed?.[index] ?? 0),
+          alpha * value +
+          (1 - alpha) * (this.smoothed?.[index] ?? 0),
       );
     }
 
@@ -106,7 +127,7 @@ export class EmotionSmoother {
     if (!reliable) {
       this.stableIndex = null;
       this.candidateIndex = null;
-      this.candidateCount = 0;
+      this.candidateSinceMs = null;
       return this.createDecision(
         null,
         top.index,
@@ -118,24 +139,22 @@ export class EmotionSmoother {
 
     if (this.stableIndex === top.index) {
       this.candidateIndex = null;
-      this.candidateCount = 0;
+      this.candidateSinceMs = null;
       return this.createDecision(top.index, null, top.value, margin, null);
     }
 
-    if (this.candidateIndex === top.index) {
-      this.candidateCount += 1;
-    } else {
+    if (this.candidateIndex !== top.index) {
       this.candidateIndex = top.index;
-      this.candidateCount = 1;
+      this.candidateSinceMs = timestamp;
     }
 
     if (
       top.value >= this.highConfidenceSwitch ||
-      this.candidateCount >= this.switchConfirmations
+      timestamp - (this.candidateSinceMs ?? timestamp) + 1e-6 >= this.switchConfirmationMs
     ) {
       this.stableIndex = top.index;
       this.candidateIndex = null;
-      this.candidateCount = 0;
+      this.candidateSinceMs = null;
       return this.createDecision(top.index, null, top.value, margin, null);
     }
 

@@ -68,10 +68,20 @@ npm --prefix desktop/electron run test:smoke
 
 # 打包后的应用也执行同一套测试 / 同梱後も同じ検証を実施
 npm --prefix desktop/electron run test:smoke -- --executable "/absolute/path/Emotion Runner Electron.app/Contents/MacOS/Emotion Runner Electron"
+
+# 証拠を指定フォルダーへ保存 / 将诊断保存到指定目录，不覆盖以往测试
+npm --prefix desktop/electron run test:smoke -- --evidence-dir "/tmp/emotion-runner-evidence" --evidence-label development
 ```
 
-smoke テストは一時データディレクトリと Chromium の合成カメラを強制し、実カメラを開きません。メニュー・キーボード操作・全画面・設定保存・モデル初期化・カメラ停止・セキュリティ境界を検査し、スクリーンショットと結果を OS の一時ディレクトリへ保存します。**合成カメラの成功は、本人の表情認識精度や実機のカメラ権限を確認したことにはなりません。**
+smoke テストは一時データディレクトリと Chromium の合成カメラを強制し、実カメラを開きません。メニュー・キーボード操作・全画面・設定保存・モデル初期化・カメラ停止・セキュリティ境界を検査します。結果・スクリーンショット・Electron の標準出力/エラー・`desktop.log` は、終了処理後に成功/失敗どちらでも保存します。既定では OS の一時ディレクトリ、`--evidence-dir` または `EMOTION_RUNNER_SMOKE_EVIDENCE_DIR` を指定するとその配下に実行ごとの固有フォルダーを作ります。CLI の指定が環境変数より優先され、開発版/同梱版は別フォルダーになります。**合成カメラの成功は、本人の表情認識精度や実機のカメラ権限を確認したことにはなりません。**
 
-手動確認では、カメラ許可/拒否、各表情、Mac 内蔵カメラの選択、再接続、終了後のカメラランプ消灯を確認してください。`.github/workflows/check-electron.yml` は Mac/Windows の検証・パッケージ作成を手動実行できます（自動公開なし）。
+手動確認では、カメラ許可/拒否、各表情、Mac 内蔵カメラの選択、再接続、終了後のカメラランプ消灯を確認してください。
+
+`.github/workflows/check-electron.yml` は次の範囲で自動検証します（自動公開なし）。
+
+- `main` / `codex/electron-*` への関連ファイルの push：Linux で Web のモデル検証・TypeScript・ESLint・単体テスト・ビルド、および Electron ポリシー/診断ヘルパーの単体テスト。
+- 関連ファイルの PR、および手動実行：上記に加え、macOS ARM64 / Windows x64 で開発版と同梱版の合成カメラ smoke、未署名/ローカル検証用パッケージを作成。成功時に ZIP、失敗時を含めて診断ファイルを保存（7 日）。ユーザーデータディレクトリ自体はアップロードしません。
+
+> 中文：普通推送只跑快速检查；PR 或手动执行才追加 Mac/Windows 打包与合成摄像头测试，控制运行成本。CI 中的 Windows `win-unpacked` 测试不等于 NSIS 安装、升级、卸载或真实摄像头已通过验证；Mac 本地验证包也不代表已完成 Developer ID 签名和公证。
 
 参考： [Electron セキュリティ](https://www.electronjs.org/docs/latest/tutorial/security) / [安全プロトコル](https://www.electronjs.org/docs/latest/api/protocol) / [macOS 配布](https://www.electron.build/v26/docs/mac/)

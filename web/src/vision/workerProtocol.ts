@@ -45,6 +45,7 @@ export interface WorkerInferenceOptions {
   readonly confidenceThreshold?: number;
   readonly marginThreshold?: number;
   readonly switchConfirmations?: number;
+  readonly switchConfirmationMs?: number;
   readonly highConfidenceSwitch?: number;
 }
 
@@ -252,6 +253,7 @@ function isWorkerInferenceOptions(value: unknown): value is WorkerInferenceOptio
     }
   }
   const confirmations = value.switchConfirmations;
+  if (value.switchConfirmationMs !== undefined && (!isFiniteNumber(value.switchConfirmationMs) || value.switchConfirmationMs < 0 || value.switchConfirmationMs > 5000)) return false;
   return (
     confirmations === undefined ||
     (isNonNegativeInteger(confirmations) && confirmations >= 1)
@@ -277,6 +279,10 @@ function isVisionResult(value: unknown): value is VisionResult {
   const reasonIsValid =
     value.uncertaintyReason === null ||
     isUncertaintyReason(value.uncertaintyReason);
+  const timings = value.stageTimings;
+  const timingsAreValid = timings === undefined || (isRecord(timings) &&
+    [timings.landmarksMs, timings.alignmentQualityMs, timings.classificationMs, timings.smoothingMs]
+      .every((duration) => isFiniteNumber(duration) && duration >= 0));
 
   return (
     isNonNegativeInteger(value.frameId) &&
@@ -297,6 +303,7 @@ function isVisionResult(value: unknown): value is VisionResult {
     isFiniteNumber(value.margin) &&
     typeof value.uncertain === "boolean" &&
     reasonIsValid &&
+    timingsAreValid &&
     probabilitiesAreValid &&
     qualityIsValid &&
     featuresAreValid &&

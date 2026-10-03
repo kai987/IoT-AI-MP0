@@ -1,4 +1,5 @@
 import { CameraController } from "./CameraController";
+import { LatencyTracker } from "./LatencyTracker";
 import { VISION_HEALTH } from "../RuntimeSettings";
 import {
   DEFAULT_AI_FPS,
@@ -204,12 +205,18 @@ export class VisionController {
   private readonly listeners = new Set<VisionListener>();
   private readonly backpressure = new SingleFrameBackpressure();
   private readonly adaptiveFrameRate = new AdaptiveFrameRate();
+  private readonly latencyTracker = new LatencyTracker();
   private worker: WorkerLike | null = null;
   private video: HTMLVideoElement | null = null;
   private provider: VisionExecutionProvider | null = null;
   private readyDeferred: Deferred<VisionExecutionProvider> | null = null;
   private stoppedDeferred: Deferred<void> | null = null;
   private running = false;
+  private suspended = false;
+  private suspensionStartedAt: number | null = null;
+  private totalSuspendedMs = 0;
+  private inferenceEpoch = 0;
+  private pendingCapture: { frameId: number; epoch: number; startedAt: number; captureMs: number; timeoutRemainingMs: number; deadlineAt: number | null } | null = null;
   private generation = 0;
   private nextFrameId = 0;
   private lastSubmittedAt = Number.NEGATIVE_INFINITY;
@@ -231,7 +238,15 @@ export class VisionController {
   public constructor(dependencies: VisionControllerDependencies = {}) {
     this.camera = dependencies.camera ?? new CameraController();
     this.createWorker = dependencies.createWorker ?? defaultWorkerFactory;
-    this.createBitmap = dependencies.createBitmap ?? ((video) => captureVideoFrame(video, undefined, defaultCaptureCanvasFactory, this.analysisWidth));
+    // Canvasフォールバックを再利用 / 位图不可用时复用采集Canvas，仅在尺寸变化时重新分配。
+    let captureCanvas: CaptureCanvas | null = null;
+    const reusableCanvasFactory: CaptureCanvasFactory = (width, height) => {
+      captureCanvas ??= defaultCaptureCanvasFactory(width, height);
+      if (captureCanvas.width !== width) captureCanvas.width = width;
+      if (captureCanvas.height !== height) captureCanvas.height = height;
+      return captureCanvas;
+    };
+    this.createBitmap = dependencies.createBitmap ?? ((video) => captureVideoFrame(video, undefined, reusableCanvasFactory, this.analysisWidth));
     this.baseUrl = dependencies.baseUrl ?? import.meta.env.BASE_URL;
     this.now = dependencies.now ?? (() => performance.now());
   }
@@ -268,6 +283,7 @@ export class VisionController {
     this.lastSubmittedAt = Number.NEGATIVE_INFINITY;
     this.lastResultAt = null;
     this.smoothedActualFps = 0;
+    this.latencyTracker.reset();
 
     try {
       const cameraInfo = await this.camera.start(options);
@@ -307,9 +323,43 @@ export class VisionController {
   }
 
   public reset(): void {
-    this.worker?.postMessage({ type: "RESET" });
+    this.invalidateHistory();
+  }
+
+  private invalidateHistory(options?: WorkerInferenceOptions): void {
+    this.inferenceEpoch += 1;
+    this.cancelFrameLoop();
+    this.worker?.postMessage(options === undefined ? { type: "RESET" } : { type: "UPDATE_OPTIONS", options });
     this.lastResultAt = null;
     this.smoothedActualFps = 0;
+    this.latencyTracker.reset();
+    this.lastSubmittedAt = Number.NEGATIVE_INFINITY;
+    this.lastCameraFrameAt = 0;
+    this.cameraFps = 0;
+    if (this.running && !this.suspended) this.scheduleNextFrame();
+  }
+
+  /** 背景では新規撮影・推論を止める / 后台暂停新帧采集与推理，保留已加载模型和摄像头连接。 */
+  public setSuspended(suspended: boolean): void {
+    if (suspended === this.suspended) return;
+    const now = this.now();
+    if (suspended) this.suspensionStartedAt = now;
+    else if (this.suspensionStartedAt !== null) {
+      this.totalSuspendedMs += Math.max(0, now - this.suspensionStartedAt);
+      this.suspensionStartedAt = null;
+    }
+    const pending = this.pendingCapture;
+    if (suspended && pending !== null && pending.deadlineAt !== null) {
+      pending.timeoutRemainingMs = Math.max(1, pending.deadlineAt - now);
+      pending.deadlineAt = null;
+    }
+    this.suspended = suspended;
+    this.clearFrameTimeout();
+    this.reset();
+    if (!this.running) return;
+    this.emitStatus(suspended ? "suspended" : "running",
+      suspended ? "バックグラウンド中・AIを一時停止" : "新しい表情の取得を待っています");
+    if (!suspended) this.armFrameTimeout();
   }
 
   /** 初回結果を待ってから開始 / 首次推理预热完成后再开始游戏，避免等待时掉血。 */
@@ -317,14 +367,14 @@ export class VisionController {
     if (this.hasCompletedFrame) return;
     if (!this.running) throw new Error("カメラは停止しています。");
     this.firstResult ??= createDeferred<void>();
-    await this.withTimeout(this.firstResult.promise, VISION_HEALTH.warmupTimeoutMs, "初回推論がタイムアウトしました。省電力モードで再試行してください。");
+    await this.withActiveTimeout(this.firstResult.promise, VISION_HEALTH.warmupTimeoutMs, "初回推論がタイムアウトしました。省電力モードで再試行してください。");
     this.firstResult = null;
     if (!this.running) throw new Error("Vision warmup was superseded");
     this.emitStatus("running", "表情認識を実行中");
   }
 
   public updateOptions(options: WorkerInferenceOptions): void {
-    this.worker?.postMessage({ type: "UPDATE_OPTIONS", options });
+    this.invalidateHistory(options);
   }
 
   public stop(): Promise<void> {
@@ -347,6 +397,7 @@ export class VisionController {
     this.cancelFrameLoop();
     this.clearFrameTimeout();
     this.backpressure.reset();
+    this.pendingCapture = null;
     this.readyDeferred?.reject(new Error("Vision controller stopped"));
     this.readyDeferred = null;
     this.firstResult?.reject(new Error("Vision controller stopped"));
@@ -406,12 +457,19 @@ export class VisionController {
         break;
       case "RESULT": {
         if (!this.running) break;
+        const pending = this.pendingCapture;
+        if (!this.backpressure.complete(response.result.frameId)) break;
+        this.pendingCapture = null;
         this.clearFrameTimeout();
+        if (this.suspended || pending?.epoch !== this.inferenceEpoch) break;
         this.consecutiveErrors = 0;
         this.hasCompletedFrame = true;
         this.firstResult?.resolve();
-        this.backpressure.complete(response.result.frameId);
         const completedAt = this.now();
+        const latencyMs = Math.max(0, completedAt - response.result.timestampMs);
+        const latency = this.latencyTracker.observe(latencyMs);
+        // 転送・撮影も予算に含める / 自适应预算纳入采集及传输耗时，不仅计算模型内部耗时。
+        this.adaptiveFrameRate.observe(Math.max(response.result.inferenceMs, completedAt - pending.startedAt));
         if (this.lastResultAt !== null) {
           const elapsed = completedAt - this.lastResultAt;
           if (elapsed > 0) {
@@ -428,6 +486,10 @@ export class VisionController {
           provider: response.provider,
           result: {
             ...response.result,
+            latencyMs,
+            captureMs: pending.captureMs,
+            latencyP50Ms: latency.p50Ms,
+            latencyP95Ms: latency.p95Ms,
             aiFps: this.smoothedActualFps || response.result.aiFps,
             cameraFps: this.cameraFps,
             analysisWidth: response.result.cameraWidth,
@@ -439,18 +501,23 @@ export class VisionController {
         break;
       }
       case "METRICS":
-        this.adaptiveFrameRate.observe(response.inferenceMs);
+        // RESULTの往復時間で調整済み / 已使用RESULT端到端预算，避免同帧重复调整。
         break;
       case "WARNING":
         if (response.frameId !== undefined) {
-          this.backpressure.complete(response.frameId);
-          this.clearFrameTimeout();
+          if (this.backpressure.complete(response.frameId)) {
+            this.pendingCapture = null;
+            this.clearFrameTimeout();
+          }
         }
         break;
-      case "ERROR":
-        this.clearFrameTimeout();
+      case "ERROR": {
+        const pending = this.pendingCapture;
         if (response.frameId !== undefined) {
-          this.backpressure.complete(response.frameId);
+          if (!this.backpressure.complete(response.frameId)) break;
+          this.pendingCapture = null;
+          this.clearFrameTimeout();
+          if (this.suspended || pending?.epoch !== this.inferenceEpoch) break;
         }
         if (response.recoverable) {
           this.frameFailed(response.message);
@@ -459,6 +526,7 @@ export class VisionController {
         this.emitError(response.message, false);
         this.readyDeferred?.reject(new Error(response.message));
         break;
+      }
       case "STOPPED":
         this.stoppedDeferred?.resolve();
         break;
@@ -473,11 +541,14 @@ export class VisionController {
 
   private scheduleNextFrame(): void {
     const video = this.video;
-    if (!this.running || video === null) {
+    if (!this.running || this.suspended || video === null) {
       return;
     }
+    const epoch = this.inferenceEpoch;
+    const generation = this.generation;
     if (typeof video.requestVideoFrameCallback === "function") {
       this.videoFrameCallbackId = video.requestVideoFrameCallback((now) => {
+        if (!this.running || this.suspended || epoch !== this.inferenceEpoch || generation !== this.generation) return;
         if (this.lastCameraFrameAt > 0 && now > this.lastCameraFrameAt) {
           const fps = 1000 / (now - this.lastCameraFrameAt);
           this.cameraFps = this.cameraFps > 0 ? this.cameraFps * 0.8 + fps * 0.2 : fps;
@@ -494,6 +565,7 @@ export class VisionController {
     }
     const pollInterval = Math.max(16, this.adaptiveFrameRate.intervalMs / 2);
     this.timerId = setTimeout(() => {
+      if (!this.running || this.suspended || epoch !== this.inferenceEpoch || generation !== this.generation) return;
       this.timerId = null;
       this.scheduleNextFrame();
       void this.maybeSubmitFrame(this.now());
@@ -516,6 +588,7 @@ export class VisionController {
     const worker = this.worker;
     if (
       !this.running ||
+      this.suspended ||
       video === null ||
       worker === null ||
       video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
@@ -529,25 +602,29 @@ export class VisionController {
     }
     this.nextFrameId += 1;
     const generation = this.generation;
-    this.frameTimeout = setTimeout(() => {
-      this.frameTimeout = null;
-      if (this.running && generation === this.generation) {
-        this.emitError("AIから応答がありません。カメラを再試行してください。", false);
-        void this.stop();
-      }
-    }, this.hasCompletedFrame ? VISION_HEALTH.frameTimeoutMs : VISION_HEALTH.warmupTimeoutMs);
+    const epoch = this.inferenceEpoch;
+    this.pendingCapture = { frameId, epoch, startedAt: this.now(), captureMs: 0,
+      timeoutRemainingMs: this.hasCompletedFrame ? VISION_HEALTH.frameTimeoutMs : VISION_HEALTH.warmupTimeoutMs, deadlineAt: null };
+    this.armFrameTimeout();
     let frame: ImageBitmap | ImageData | null = null;
     try {
       frame = await this.createBitmap(video);
       if (
         !this.running ||
+        this.suspended ||
+        epoch !== this.inferenceEpoch ||
         generation !== this.generation ||
         worker !== this.worker
       ) {
         closeCapturedFrame(frame);
-        this.backpressure.complete(frameId);
+        if (generation === this.generation && worker === this.worker) {
+          this.backpressure.complete(frameId);
+          this.pendingCapture = null;
+          this.clearFrameTimeout();
+        }
         return;
       }
+      if (this.pendingCapture !== null) this.pendingCapture.captureMs = Math.max(0, this.now() - this.pendingCapture.startedAt);
       this.lastSubmittedAt = timestampMs;
       if (capturedFrameIsBitmap(frame)) {
         worker.postMessage(
@@ -568,7 +645,9 @@ export class VisionController {
       }
       if (generation !== this.generation || worker !== this.worker) return;
       this.backpressure.complete(frameId);
+      this.pendingCapture = null;
       this.clearFrameTimeout();
+      if (this.suspended || epoch !== this.inferenceEpoch) return;
       this.frameFailed(errorMessage(error));
     }
   }
@@ -576,6 +655,20 @@ export class VisionController {
   private clearFrameTimeout(): void {
     if (this.frameTimeout !== null) clearTimeout(this.frameTimeout);
     this.frameTimeout = null;
+  }
+
+  private armFrameTimeout(): void {
+    const pending = this.pendingCapture;
+    if (!this.running || this.suspended || pending === null) return;
+    this.clearFrameTimeout();
+    pending.deadlineAt = this.now() + pending.timeoutRemainingMs;
+    this.frameTimeout = setTimeout(() => {
+      this.frameTimeout = null;
+      if (this.running && !this.suspended && this.pendingCapture === pending) {
+        this.emitError("AIから応答がありません。カメラを再試行してください。", false);
+        void this.stop();
+      }
+    }, pending.timeoutRemainingMs);
   }
 
   private frameFailed(message: string): void {
@@ -618,5 +711,22 @@ export class VisionController {
         clearTimeout(timeoutId);
       }
     }
+  }
+
+  private async withActiveTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+    const startedAt = this.activeNow();
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setInterval(() => {
+        if (this.activeNow() - startedAt >= timeoutMs) reject(new Error(message));
+      }, 100);
+    });
+    try { return await Promise.race([promise, timeout]); }
+    finally { if (timer !== null) clearInterval(timer); }
+  }
+
+  private activeNow(): number {
+    const now = this.now();
+    return now - this.totalSuspendedMs - (this.suspensionStartedAt === null ? 0 : Math.max(0, now - this.suspensionStartedAt));
   }
 }

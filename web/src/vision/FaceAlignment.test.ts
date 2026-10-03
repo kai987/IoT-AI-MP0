@@ -1,12 +1,61 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   ARC_FACE_TEMPLATE_224,
+  FACE_ALIGNMENT_SIZE,
+  FaceAligner,
+  alignFace,
   estimateSimilarityTransform,
   extractArcFaceFivePoints,
   transformPoint,
+  type CanvasFactory,
 } from "./FaceAlignment";
 import type { NormalizedPoint3D, Point2D } from "./types";
+
+function canvasHarness() {
+  const surfaces: {
+    readonly canvas: HTMLCanvasElement;
+    readonly context: {
+      readonly setTransform: ReturnType<typeof vi.fn>;
+      readonly clearRect: ReturnType<typeof vi.fn>;
+      readonly putImageData: ReturnType<typeof vi.fn>;
+      readonly drawImage: ReturnType<typeof vi.fn>;
+    };
+  }[] = [];
+  const factory: CanvasFactory = (width, height) => {
+    const context = {
+      imageSmoothingEnabled: false,
+      imageSmoothingQuality: "low",
+      setTransform: vi.fn(),
+      clearRect: vi.fn(),
+      putImageData: vi.fn(),
+      drawImage: vi.fn(),
+      getImageData: vi.fn(() => ({
+        width: FACE_ALIGNMENT_SIZE,
+        height: FACE_ALIGNMENT_SIZE,
+        data: new Uint8ClampedArray(FACE_ALIGNMENT_SIZE ** 2 * 4),
+        colorSpace: "srgb",
+      })),
+    };
+    const canvas = {
+      width,
+      height,
+      getContext: vi.fn(() => context),
+    } as unknown as HTMLCanvasElement;
+    surfaces.push({ canvas, context });
+    return canvas;
+  };
+  return { surfaces, factory };
+}
+
+function rgbaImage(width: number, height: number): ImageData {
+  return {
+    width,
+    height,
+    data: new Uint8ClampedArray(width * height * 4),
+    colorSpace: "srgb",
+  };
+}
 
 describe("FaceAlignment", () => {
   const base: readonly Point2D[] = [
@@ -101,5 +150,55 @@ describe("FaceAlignment", () => {
         base,
       ),
     ).toBeNull();
+  });
+
+  it("reuses destination and ImageData source canvases across frames", () => {
+    const { surfaces, factory } = canvasHarness();
+    const aligner = new FaceAligner(factory);
+    const firstImage = rgbaImage(640, 360);
+    const secondImage = rgbaImage(960, 540);
+
+    expect(aligner.align(firstImage, ARC_FACE_TEMPLATE_224)).not.toBeNull();
+    expect(aligner.align(secondImage, ARC_FACE_TEMPLATE_224)).not.toBeNull();
+
+    expect(surfaces).toHaveLength(2);
+    expect(surfaces[0]?.canvas.width).toBe(960);
+    expect(surfaces[0]?.canvas.height).toBe(540);
+    expect(surfaces[0]?.context.putImageData).toHaveBeenLastCalledWith(secondImage, 0, 0);
+    const destination = surfaces[1]?.context;
+    expect(destination?.setTransform).toHaveBeenNthCalledWith(1, 1, 0, 0, 1, 0, 0);
+    expect(destination?.setTransform).toHaveBeenNthCalledWith(3, 1, 0, 0, 1, 0, 0);
+    expect(destination?.clearRect).toHaveBeenCalledTimes(2);
+    expect(destination?.setTransform.mock.invocationCallOrder[2]).toBeLessThan(
+      destination?.clearRect.mock.invocationCallOrder[1] ?? 0,
+    );
+  });
+
+  it("uses only the alignment canvas for transferable image sources", () => {
+    const { surfaces, factory } = canvasHarness();
+    const aligner = new FaceAligner(factory);
+    const bitmap = { width: 640, height: 360 } as ImageBitmap;
+
+    expect(aligner.align(bitmap, ARC_FACE_TEMPLATE_224)).not.toBeNull();
+    expect(aligner.align(bitmap, ARC_FACE_TEMPLATE_224)).not.toBeNull();
+    expect(surfaces).toHaveLength(1);
+    expect(surfaces[0]?.context.drawImage).toHaveBeenCalledWith(bitmap, 0, 0);
+
+    aligner.dispose();
+    expect(aligner.align(bitmap, ARC_FACE_TEMPLATE_224)).not.toBeNull();
+    expect(surfaces).toHaveLength(2);
+  });
+
+  it("keeps instances isolated and the original alignFace factory API compatible", () => {
+    const { surfaces, factory } = canvasHarness();
+    const bitmap = { width: 640, height: 360 } as ImageBitmap;
+    const collapsed = new Array<Point2D>(5).fill({ x: 2, y: 2 });
+    expect(new FaceAligner(factory).align(bitmap, collapsed)).toBeNull();
+    expect(surfaces).toHaveLength(0);
+
+    expect(new FaceAligner(factory).align(bitmap, ARC_FACE_TEMPLATE_224)).not.toBeNull();
+    expect(new FaceAligner(factory).align(bitmap, ARC_FACE_TEMPLATE_224)).not.toBeNull();
+    expect(alignFace(bitmap, ARC_FACE_TEMPLATE_224, factory)).not.toBeNull();
+    expect(surfaces).toHaveLength(3);
   });
 });

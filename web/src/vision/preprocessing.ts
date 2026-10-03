@@ -5,7 +5,10 @@ export const EMOTION_INPUT_DIMS = [1, 3, 224, 224] as const;
 export const EMOTION_MEAN = [0.485, 0.456, 0.406] as const;
 export const EMOTION_STD = [0.229, 0.224, 0.225] as const;
 
-export function prepareEmotionInput(imageData: ImageData): Float32Array {
+export function prepareEmotionInput(
+  imageData: ImageData,
+  destination?: Float32Array,
+): Float32Array {
   if (
     imageData.width !== EMOTION_INPUT_SIZE ||
     imageData.height !== EMOTION_INPUT_SIZE ||
@@ -15,7 +18,10 @@ export function prepareEmotionInput(imageData: ImageData): Float32Array {
   }
 
   const planeSize = EMOTION_INPUT_SIZE * EMOTION_INPUT_SIZE;
-  const tensor = new Float32Array(planeSize * 3);
+  const tensor = destination ?? new Float32Array(planeSize * 3);
+  if (tensor.length !== planeSize * 3) {
+    throw new RangeError("Emotion tensor buffer must contain 3x224x224 values");
+  }
   for (let pixel = 0; pixel < planeSize; pixel += 1) {
     const rgbaOffset = pixel * 4;
     const red = (imageData.data[rgbaOffset] ?? 0) / 255;

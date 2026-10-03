@@ -31,6 +31,7 @@ export type VisionStatus =
   | "requesting-camera"
   | "loading-models"
   | "running"
+  | "suspended"
   | "stopping"
   | "stopped"
   | "error";
@@ -71,6 +72,11 @@ export interface EmotionDecision {
 }
 
 export interface VisionResult extends EmotionDecision {
+  readonly latencyMs?: number;
+  readonly captureMs?: number;
+  readonly latencyP50Ms?: number;
+  readonly latencyP95Ms?: number;
+  readonly stageTimings?: VisionStageTimings;
   readonly cameraFps?: number;
   readonly analysisWidth?: number;
   readonly analysisHeight?: number;
@@ -84,6 +90,13 @@ export interface VisionResult extends EmotionDecision {
   readonly faceBox: FaceBox | null;
   readonly qualityIssue: QualityIssue | null;
   readonly features: FacialFeatures | null;
+}
+
+export interface VisionStageTimings {
+  readonly landmarksMs: number;
+  readonly alignmentQualityMs: number;
+  readonly classificationMs: number;
+  readonly smoothingMs: number;
 }
 
 export interface CameraDevice {

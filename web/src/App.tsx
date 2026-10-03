@@ -149,6 +149,11 @@ export function App() {
       analysisWidth: result.analysisWidth,
       analysisHeight: result.analysisHeight,
       startupSeconds: startupSeconds.current,
+      latencyMs: result.latencyMs,
+      captureMs: result.captureMs,
+      latencyP50Ms: result.latencyP50Ms,
+      latencyP95Ms: result.latencyP95Ms,
+      stageTimings: result.stageTimings,
     };
     if (receivedAt - lastVisionUiAt.current >= 100) {
       setVisionSnapshot(nextSnapshot);
@@ -201,6 +206,7 @@ export function App() {
       const vision = new module.VisionController();
       visionRef.current = vision;
       visionUnsubscribeRef.current = vision.subscribe(applyVisionEvent);
+      vision.setSuspended(document.hidden);
       const startedAt = performance.now();
       const camera = await vision.start({
         video,
@@ -239,7 +245,10 @@ export function App() {
       setLoadingProgress(1);
       practiceMeasurement.current = null;
       setPracticeReport(null);
-      if (!practice) engine.start(performance.now() / 1000);
+      if (!practice) {
+        engine.start(performance.now() / 1000);
+        if (document.hidden) engine.togglePause(performance.now() / 1000);
+      }
       setScreen(practice ? "practice" : "game");
       requestAnimationFrame(() => canvasRef.current?.focus());
     } catch (error: unknown) {
@@ -267,6 +276,7 @@ export function App() {
     if (sequence !== launchSequenceRef.current) return;
     const engine = ensureEngine("keyboard");
     engine.start(performance.now() / 1000);
+    if (document.hidden) engine.togglePause(performance.now() / 1000);
     setScreen("game");
     requestAnimationFrame(() => canvasRef.current?.focus());
   }, [audio, ensureEngine, initializeAudio, persistSettings, stopVision]);
@@ -377,14 +387,18 @@ export function App() {
   }, [mode, screen]);
 
   useEffect(() => {
-    const pauseWhenHidden = () => {
+    const syncVisibility = () => {
       if (document.hidden && engineRef.current?.state === GameState.Playing) {
         engineRef.current.togglePause(performance.now() / 1000);
-        engineRef.current.invalidateEmotion();
       }
+      visionRef.current?.setSuspended(document.hidden);
+      engineRef.current?.invalidateEmotion();
+      lastVisionAt.current = Number.NEGATIVE_INFINITY;
+      setVisionSnapshot((current) => ({ ...current, uncertain: true, aiFps: 0,
+        uncertaintyReason: document.hidden ? "バックグラウンド中・AIを一時停止" : "新しい表情の取得を待っています" }));
     };
-    document.addEventListener("visibilitychange", pauseWhenHidden);
-    return () => document.removeEventListener("visibilitychange", pauseWhenHidden);
+    document.addEventListener("visibilitychange", syncVisibility);
+    return () => document.removeEventListener("visibilitychange", syncVisibility);
   }, []);
 
   useEffect(() => {

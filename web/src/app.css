@@ -499,7 +499,9 @@ button:disabled {
   top: 3%;
   right: 1.5%;
   width: 24%;
-  overflow: hidden;
+  max-height: 80%;
+  overflow-x: hidden;
+  overflow-y: auto;
   border: 1px solid #6b7f98;
   border-radius: 10px;
   background: rgb(7 19 39 / 94%);
@@ -573,11 +575,13 @@ button:disabled {
   font-size: 0.78rem;
 }
 
-.vision-stats {
+.vision-stats,
+.vision-timings {
   margin: 0;
 }
 
-.vision-stats div {
+.vision-stats div,
+.vision-timings div {
   display: grid;
   grid-template-columns: 31% 1fr;
   min-height: clamp(24px, 2.2vw, 36px);
@@ -587,20 +591,40 @@ button:disabled {
   font-size: clamp(0.44rem, 0.8vw, 0.74rem);
 }
 
-.vision-stats div:last-child {
+.vision-stats div:last-child,
+.vision-timings div:last-child {
   border-bottom: 0;
 }
 
-.vision-stats dt {
+.vision-stats dt,
+.vision-timings dt {
   color: #c1ccda;
 }
 
-.vision-stats dd {
+.vision-stats dd,
+.vision-timings dd {
   overflow: hidden;
   margin: 0;
   color: var(--cyan);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.vision-diagnostics {
+  border-top: 1px solid #263a55;
+  background: #0c192c;
+}
+
+.vision-diagnostics summary {
+  padding: 7px 10px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: clamp(0.48rem, 0.8vw, 0.74rem);
+}
+
+.vision-diagnostics[open] {
+  max-height: 220px;
+  overflow-y: auto;
 }
 
 .mode-indicator {
@@ -720,7 +744,11 @@ button:disabled {
   .camera-panel {
     top: 17%;
     width: 29%;
+    max-height: 66%;
   }
+
+  .camera-panel:has(.vision-diagnostics[open]) { width: min(340px, 65%); }
+  .vision-timings div { grid-template-columns: 40% 1fr; font-size: 0.6rem; }
 
   .mode-indicator { top: auto; bottom: 14%; right: auto; left: 2%; padding: 3px 6px; font-size: 0.5rem; }
   .mode-indicator .game-fps { font-size: 0.5rem; }

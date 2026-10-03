@@ -1,25 +1,24 @@
 // 実カメラを使わない Electron 統合確認 / 不使用真实摄像头的 Electron 集成验证。
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import evidenceHelpers from "./smoke-evidence.cjs";
+import packagedLauncher from "./packaged-launch.cjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const webRequire = createRequire(new URL("../../../web/package.json", import.meta.url));
 const desktopRequire = createRequire(new URL("../package.json", import.meta.url));
-const { _electron } = webRequire("playwright");
+const { _electron, chromium } = webRequire("playwright");
 const { expect } = webRequire("@playwright/test");
 const playwrightLoader = join(dirname(webRequire.resolve("playwright-core/package.json")), "lib/server/electron/loader.js");
-const executableIndex = process.argv.indexOf("--executable");
-const packagedExecutable = executableIndex < 0 ? null : process.argv[executableIndex + 1];
-if (executableIndex >= 0 && !packagedExecutable) throw new Error("--executable requires an absolute executable path");
+const options = evidenceHelpers.smokeOptions(process.argv.slice(2));
+const packagedExecutable = options.executable;
 
-const evidenceDir = await mkdtemp(join(tmpdir(), "emotion-runner-electron-smoke-"));
+const evidenceDir = await evidenceHelpers.createEvidenceDirectory(options);
 const userData = join(evidenceDir, "user-data");
 const main = resolve(here, "../src/main.cjs");
-const observations = { packaged: packagedExecutable !== null, evidenceDir, steps: [], warnings: [], stderr: [], assetResponses: [] };
+const observations = { packaged: packagedExecutable !== null, evidenceDir, startedAt: new Date().toISOString(), steps: [], warnings: [], stderr: [], stdout: [], assetResponses: [] };
 let application;
 let page;
 let failures = [];
@@ -32,19 +31,29 @@ function passed(step) {
 }
 
 async function launch() {
-  application = await _electron.launch({
+  const testArgs = ["--electron-smoke-test", `--test-user-data=${userData}`];
+  application = packagedExecutable ? await packagedLauncher.launchPackagedElectron({
+    executablePath: packagedExecutable,
+    args: testArgs,
+    env: { ...process.env, ELECTRON_ENABLE_LOGGING: "1" },
+    chromium,
+    onStderr: (text) => observations.stderr.push(text),
+    onStdout: (text) => observations.stdout.push(text),
+  }) : await _electron.launch({
     executablePath: packagedExecutable ?? desktopRequire("electron"),
     args: [
       // 明示 exe では Playwright が loader を省くため補う / 显式 exe 时 Playwright 不自动载入启动同步器。
       "-r", playwrightLoader,
-      ...(packagedExecutable ? [] : [main]),
-      "--electron-smoke-test",
-      `--test-user-data=${userData}`,
+      main,
+      ...testArgs,
     ],
     timeout: 30_000,
     env: { ...process.env, ELECTRON_ENABLE_LOGGING: "1" },
   });
-  application.process().stderr.on("data", (value) => observations.stderr.push(value.toString()));
+  if (!packagedExecutable) {
+    application.process().stderr.on("data", (value) => observations.stderr.push(value.toString()));
+    application.process().stdout.on("data", (value) => observations.stdout.push(value.toString()));
+  }
   page = await application.firstWindow();
   page.setDefaultTimeout(15_000);
   failures = [];
@@ -79,8 +88,34 @@ async function launch() {
 
 async function close() {
   if (application) {
-    await application.close();
+    const closing = application;
     application = undefined;
+    let timeout;
+    try {
+      await Promise.race([
+        (async () => {
+          // 利用者と同じウィンドウ終了経路で検証 / 通过用户正常关闭窗口的路径退出，再确认进程结束。
+          const closed = closing.waitForEvent("close", { timeout: 15_000 });
+          void closed.catch(() => undefined);
+          await closing.evaluate(({ BrowserWindow, app }) => {
+            const windows = BrowserWindow.getAllWindows();
+            if (windows.length === 0) app.quit();
+            else for (const win of windows) win.close();
+          });
+          await closing.disconnectTestInstrumentation?.();
+          await closed;
+        })(),
+        new Promise((_resolve, reject) => {
+          timeout = setTimeout(() => reject(new Error("Electron smoke cleanup timed out after 15 seconds")), 15_000);
+        }),
+      ]);
+    } catch (error) {
+      // 自分が起動した試験プロセスだけを終了 / 只强制结束本次测试创建的进程，不影响用户应用。
+      closing.process().kill("SIGKILL");
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }
 
@@ -170,6 +205,12 @@ try {
 
   await page.evaluate(() => {
     globalThis.__electronSmokeTracks = [];
+    globalThis.__electronSmokeFrameSubmissions = 0;
+    const postMessage = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (message, ...arguments_) {
+      if (message?.type === "FRAME") globalThis.__electronSmokeFrameSubmissions += 1;
+      return postMessage.call(this, message, ...arguments_);
+    };
     const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
     navigator.mediaDevices.getUserMedia = async (constraints) => {
       const stream = await original(constraints);
@@ -188,6 +229,46 @@ try {
   observations.assetResponses.push(...assetResponses);
   assert.ok(await page.evaluate(() => globalThis.__electronSmokeTracks.some((track) => track.readyState === "live")));
   await page.screenshot({ path: join(evidenceDir, "synthetic-camera.png"), fullPage: true });
+
+  // visibility 境界を合成し、実 Worker への新規 FRAME 停止を検証 / 合成可见性事件，验证真实 Worker 暂停新帧。
+  // Playwright は可視状態を強制するため、ネイティブ hide の実機受入とは区別 / Playwright 会固定可见状态，此项不等于原生隐藏窗口验收。
+  await expect.poll(() => page.evaluate(() => globalThis.__electronSmokeFrameSubmissions)).toBeGreaterThan(1);
+  await page.evaluate(() => {
+    globalThis.__electronSmokeHidden = true;
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => globalThis.__electronSmokeHidden });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  assert.equal(await page.evaluate(() => document.hidden), true);
+  await expect(page.locator(".video-status")).toHaveText("バックグラウンド中・AIを一時停止");
+  await expect(page.getByTestId("game-canvas")).toHaveAttribute("data-game-state", "paused");
+  const hiddenFrameCount = await page.evaluate(() => globalThis.__electronSmokeFrameSubmissions);
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  assert.equal(await page.evaluate(() => globalThis.__electronSmokeFrameSubmissions), hiddenFrameCount,
+    "a suspended application must not submit new inference frames");
+  await page.evaluate(() => {
+    globalThis.__electronSmokeHidden = false;
+    document.dispatchEvent(new Event("visibilitychange"));
+    delete document.hidden;
+    delete globalThis.__electronSmokeHidden;
+  });
+  assert.equal(await page.evaluate(() => document.hidden), false);
+  await expect(page.getByTestId("game-canvas")).toHaveAttribute("data-game-state", "paused");
+  await expect.poll(() => page.evaluate(() => globalThis.__electronSmokeFrameSubmissions), { timeout: 30_000 }).toBeGreaterThan(hiddenFrameCount);
+  await page.locator(".vision-diagnostics summary").click();
+  const timingValues = page.locator(".vision-timings dd");
+  await expect(timingValues.nth(1)).toHaveText(/^\d+ ms \/ \d+ ms$/, { timeout: 30_000 });
+  const timingText = await timingValues.allTextContents();
+  const [p50, p95] = timingText[1].match(/\d+/g).map(Number);
+  assert.ok(Number.isFinite(p50) && Number.isFinite(p95) && p95 >= p50);
+  for (const text of timingText) assert.match(text, /^\d+ ms(?: \/ \d+ ms)?$/);
+  observations.backgroundLifecycle = { visibilityMode: "synthetic-document-boundary", hiddenFrameCount, resumedFrameCount: await page.evaluate(() => globalThis.__electronSmokeFrameSubmissions), hiddenObservationMs: 600 };
+  observations.timings = { p50Ms: p50, p95Ms: p95, displayedValues: timingText };
+  await page.screenshot({ path: join(evidenceDir, "timing-and-resumed-camera.png"), fullPage: true });
+  await page.getByTestId("game-canvas").focus();
+  await page.keyboard.press("KeyP");
+  await expect(page.getByTestId("game-canvas")).toHaveAttribute("data-game-state", "playing");
+  passed("synthetic visibility boundary stops inference; resume gets fresh AI but gameplay requires P; finite latency/stage metrics render");
+
   await page.getByRole("button", { name: "カメラを停止", exact: true }).click();
   await expect(page.locator("video")).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => globalThis.__electronSmokeTracks.every((track) => track.readyState === "ended"))).toBe(true);
@@ -236,22 +317,42 @@ try {
   });
   assert.equal(denyResult, true);
   observations.policyCheckMessages = [...failures];
+  // 意図的な CSP 拒否と本当の不具合を分離 / 将故意触发的 CSP 拦截与真正的运行错误分开。
+  assert.deepEqual(failures.filter((message) => !(message.includes("https://example.invalid/electron-smoke-fetch") &&
+    /Content Security Policy|content security policy/.test(message))), []);
+  failures = [];
   passed("external navigation, popup, and network fetch are denied");
 
   observations.result = "passed";
-  await writeFile(join(evidenceDir, "result.json"), `${JSON.stringify(observations, null, 2)}\n`);
-  console.log(`Evidence: ${evidenceDir}`);
 } catch (error) {
   observations.result = "failed";
   observations.error = String(error?.stack ?? error);
-  observations.failures = failures;
-  observations.externalRequests = externalRequests;
-  observations.assetResponses.push(...assetResponses);
-  await page?.screenshot({ path: join(evidenceDir, "failure.png"), fullPage: true }).catch(() => undefined);
-  await writeFile(join(evidenceDir, "result.json"), `${JSON.stringify(observations, null, 2)}\n`);
-  console.error(`Evidence: ${evidenceDir}`);
+  observations.failurePageState = await page?.evaluate(() => ({ hidden: document.hidden, url: location.href,
+    gameState: document.querySelector('[data-testid="game-canvas"]')?.getAttribute("data-game-state") })).catch(() => undefined);
+  // 非表示エラーでも撮影できるようウィンドウだけ戻す / 隐藏窗口测试失败时，先恢复窗口以保存截图。
+  await application?.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.show()).catch(() => undefined);
+  await page?.screenshot({ path: join(evidenceDir, "failure.png"), fullPage: true, timeout: 5_000 }).catch(() => undefined);
   console.error(error);
   process.exitCode = 1;
 } finally {
-  await close();
+  // 終了処理が失敗しても証拠を残す / 清理失败也必须保留结果、日志和已有截图。
+  try {
+    await close();
+  } catch (error) {
+    observations.result = "failed";
+    observations.cleanupError = String(error?.stack ?? error);
+    console.error(error);
+    process.exitCode = 1;
+  }
+  observations.finishedAt = new Date().toISOString();
+  observations.failures = failures;
+  observations.externalRequests = externalRequests;
+  observations.assetResponses = [...new Map([...observations.assetResponses, ...assetResponses].map((response) => [response.url, response])).values()];
+  try {
+    await evidenceHelpers.writeSmokeEvidence(evidenceDir, observations, userData);
+  } catch (error) {
+    console.error("Could not save smoke evidence:", error);
+    process.exitCode = 1;
+  }
+  console.log(`Evidence: ${evidenceDir}`);
 }

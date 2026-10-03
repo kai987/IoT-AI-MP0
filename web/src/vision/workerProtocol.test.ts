@@ -103,6 +103,8 @@ describe("worker request protocol", () => {
       imageData: imageDataLike(),
     },
     { type: "UPDATE_OPTIONS", options: { smoothingAlpha: 2 } },
+    { type: "UPDATE_OPTIONS", options: { switchConfirmationMs: -1 } },
+    { type: "UPDATE_OPTIONS", options: { switchConfirmationMs: Number.NaN } },
   ])("rejects an invalid structured request %#", (message) => {
     expect(() => parseWorkerRequest(message)).toThrow(VisionProtocolError);
   });
@@ -137,6 +139,12 @@ describe("worker response protocol", () => {
     expect(() =>
       parseWorkerResponse({ type: "ERROR", message: 42, recoverable: true }),
     ).toThrow(VisionProtocolError);
+  });
+  it("validates stage timings without breaking older worker results", () => {
+    const stageTimings = { landmarksMs: 1, alignmentQualityMs: 2, classificationMs: 3, smoothingMs: 0 };
+    expect(parseWorkerResponse({ type: "RESULT", provider: "wasm", result: { ...result(), stageTimings } })).toMatchObject({ result: { stageTimings } });
+    expect(() => parseWorkerResponse({ type: "RESULT", provider: "wasm", result: { ...result(), stageTimings: { ...stageTimings, classificationMs: -1 } } })).toThrow(VisionProtocolError);
+    expect(parseWorkerRequest({ type: "UPDATE_OPTIONS", options: { switchConfirmationMs: 150 } })).toEqual({ type: "UPDATE_OPTIONS", options: { switchConfirmationMs: 150 } });
   });
 });
 

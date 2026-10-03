@@ -1,4 +1,5 @@
 import type { RefObject } from "react";
+import type { VisionStageTimings } from "../vision/types";
 
 interface NormalizedBox {
   readonly x: number;
@@ -24,6 +25,11 @@ export interface CameraPanelSnapshot {
   readonly analysisWidth?: number;
   readonly analysisHeight?: number;
   readonly startupSeconds?: number;
+  readonly latencyMs?: number;
+  readonly captureMs?: number;
+  readonly latencyP50Ms?: number;
+  readonly latencyP95Ms?: number;
+  readonly stageTimings?: VisionStageTimings;
 }
 
 export interface CameraPanelProps {
@@ -91,6 +97,22 @@ export function CameraPanel({ videoRef, snapshot, onDisableCamera }: CameraPanel
         <div><dt>解析入力</dt><dd>{snapshot.analysisWidth || "--"} × {snapshot.analysisHeight || "--"}</dd></div>
         <div><dt>AI準備</dt><dd>{snapshot.startupSeconds === undefined ? "--" : `${snapshot.startupSeconds.toFixed(1)} 秒`}</dd></div>
       </dl>
+      <details className="vision-diagnostics">
+        <summary>処理時間・入力遅延</summary>
+        <dl className="vision-timings" aria-label="表情入力の遅延統計">
+          <div><dt>入力遅延</dt><dd>{milliseconds(snapshot.latencyMs)}</dd></div>
+          <div><dt>P50 / P95</dt><dd>{milliseconds(snapshot.latencyP50Ms)} / {milliseconds(snapshot.latencyP95Ms)}</dd></div>
+          <div><dt>撮影・縮小</dt><dd>{milliseconds(snapshot.captureMs)}</dd></div>
+          <div><dt>顔検出</dt><dd>{milliseconds(snapshot.stageTimings?.landmarksMs)}</dd></div>
+          <div><dt>整列・品質</dt><dd>{milliseconds(snapshot.stageTimings?.alignmentQualityMs)}</dd></div>
+          <div><dt>表情モデル</dt><dd>{milliseconds(snapshot.stageTimings?.classificationMs)}</dd></div>
+          <div><dt>安定化</dt><dd>{milliseconds(snapshot.stageTimings?.smoothingMs)}</dd></div>
+        </dl>
+      </details>
     </aside>
   );
+}
+
+function milliseconds(value: number | undefined): string {
+  return value === undefined ? "--" : `${Math.round(value)} ms`;
 }
