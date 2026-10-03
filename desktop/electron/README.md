@@ -31,6 +31,8 @@ npm --prefix desktop/electron run dist:win
 
 出力は `desktop/electron/release/` です。Mac の `.app` は `release/mac-arm64/Emotion Runner Electron.app` に作成されます。Python 版の `dist/Emotion Runner.app`、Python ソース、仮想環境、最高得点には触れません。
 
+アプリアイコンは Web の `favicon.svg` と同じ笑顔を使用します。`packaging/icon.icns`（macOS）、`icon.ico`（Windows、16〜256 px）、`icon.png`（1024 px）を同梱し、通常のビルドでは変換ツールの追加インストールは不要です。元 SVG を変更したときは macOS と `rsvg-convert` のある環境で `npm --prefix desktop/electron run icons:prepare` を実行してください。 / 应用图标与网页笑脸保持一致；修改 SVG 后可用此命令重新生成，普通打包直接使用已生成的图标。
+
 Mac の上記コマンドは ad-hoc 署名のローカル検証版で、Developer ID 署名・公証は行いません。この検証版だけ Hardened Runtime を無効にしています（Chromium のサンドボックス・context isolation・Web security は有効）。第三者へ配布する際は Developer ID と公証環境を別途用意し、`electron-builder.yml` の Hardened Runtime を有効にした通常ビルドで署名・公証を行ってください。証明書や認証情報を Git に保存しないでください。
 
 > 中文：本地 Mac 包未公证，不代表可以无提示地分发给其他用户。Windows 构建配置已提供，但 macOS 上的测试不能代替 Windows 实机验证。初版不发布自动更新，也不自动上传 Release 或 Site。

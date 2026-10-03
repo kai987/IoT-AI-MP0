@@ -10,6 +10,8 @@ files:
 asar: true
 npmRebuild: false
 mac:
+  # Web版と同じ笑顔のアイコン / 使用与网页相同的笑脸图标。
+  icon: packaging/icon.icns
   category: public.app-category.games
   target:
     - target: dmg
@@ -23,6 +25,7 @@ mac:
   entitlements: packaging/entitlements.mac.plist
   entitlementsInherit: packaging/entitlements.mac.inherit.plist
 win:
+  icon: packaging/icon.ico
   target:
     - target: nsis
       arch: [x64]
